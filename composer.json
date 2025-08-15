@@ -1,0 +1,46 @@
+{
+    "name": "yangweijie/filesystem-ctlife",
+    "description": "CTFile adapter for League Flysystem",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Yangweijie\\FilesystemCtlife\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Yangweijie\\FilesystemCtlife\\Tests\\": "tests/"
+        }
+    },
+    "authors": [
+        {
+            "name": "yangweijie",
+            "email": "917647288@qq.com"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "league/flysystem": "^2.5.0|^3.0.0",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "pestphp/pest": "^2.0",
+        "phpunit/phpunit": "^9.0|^10.0"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "test-coverage": "pest --coverage",
+        "test-integration": "pest tests/Integration/",
+        "test-performance": "pest tests/Performance/",
+        "test-all": "pest --testsuite=Unit,Integration,Performance",
+        "cs-fix": "php-cs-fixer fix",
+        "analyse": "phpstan analyse"
+    }
+}
