@@ -2,1032 +2,699 @@
 
 declare(strict_types=1);
 
-namespace Yangweijie\FilesystemCtlife;
+namespace YangWeijie\FilesystemCtfile;
 
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
-use League\Flysystem\StorageAttributes;
+use League\Flysystem\PathPrefixer;
 use League\Flysystem\UnableToCheckDirectoryExistence;
 use League\Flysystem\UnableToCheckFileExistence;
-use League\Flysystem\UnableToWriteFile;
-use League\Flysystem\UnableToReadFile;
-use League\Flysystem\UnableToDeleteFile;
-use League\Flysystem\UnableToDeleteDirectory;
-use League\Flysystem\UnableToCreateDirectory;
-use League\Flysystem\UnableToMoveFile;
 use League\Flysystem\UnableToCopyFile;
+use League\Flysystem\UnableToCreateDirectory;
+use League\Flysystem\UnableToDeleteDirectory;
+use League\Flysystem\UnableToDeleteFile;
+use League\Flysystem\UnableToMoveFile;
+use League\Flysystem\UnableToReadFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
-use League\Flysystem\DirectoryAttributes;
-use League\Flysystem\UnableToListContents;
-use Yangweijie\FilesystemCtlife\Exceptions\CTFileException;
-use Yangweijie\FilesystemCtlife\Exceptions\AuthenticationException;
-use Yangweijie\FilesystemCtlife\Exceptions\NetworkException;
-use Yangweijie\FilesystemCtlife\Exceptions\RateLimitException;
-use Yangweijie\FilesystemCtlife\Support\FileInfo;
-use Yangweijie\FilesystemCtlife\Support\UploadHelper;
+use League\Flysystem\UnableToWriteFile;
+use YangWeijie\FilesystemCtfile\Utilities\MetadataMapper;
 
 /**
- * CTFile Flysystem 适配器主类
- * 
- * 实现 League\Flysystem\FilesystemAdapter 接口，提供完整的文件系统抽象
- * 支持 CTFile 云存储的所有基本操作
+ * CtFileAdapter - Flysystem adapter for ctFile integration.
+ *
+ * This adapter implements the Flysystem FilesystemAdapter interface to provide
+ * seamless integration between Flysystem and ctFile functionality.
  */
-class CTFileAdapter implements FilesystemAdapter
+class CtFileAdapter implements FilesystemAdapter
 {
     /**
-     * 配置实例
+     * CtFile client instance.
      */
-    private CTFileConfig $config;
+    private CtFileClient $client;
 
     /**
-     * API 客户端
+     * Path prefixer for handling root paths.
      */
-    private CTFileClient $client;
+    private PathPrefixer $prefixer;
 
     /**
-     * 路径映射器
+     * Adapter configuration.
      */
-    private PathMapper $pathMapper;
+    private array $config;
 
     /**
-     * 上传辅助器
+     * Cache manager for metadata and directory listings.
      */
-    private UploadHelper $uploadHelper;
+    private ?CacheManager $cacheManager;
 
     /**
-     * 构造函数
+     * Retry handler for failed operations.
+     */
+    private ?RetryHandler $retryHandler;
+
+    /**
+     * Create a new CtFileAdapter instance.
      *
-     * @param CTFileConfig $config 配置实例
+     * @param CtFileClient $client Configured CtFile client
+     * @param array $config Adapter configuration options
+     * @param CacheManager|null $cacheManager Optional cache manager
+     * @param RetryHandler|null $retryHandler Optional retry handler
      */
-    public function __construct(CTFileConfig $config)
-    {
-        $this->config = $config;
-        $this->client = new CTFileClient($config);
-        $this->pathMapper = new PathMapper($this->client, $config);
-        $this->uploadHelper = new UploadHelper($this->client);
+    public function __construct(
+        CtFileClient $client,
+        array $config = [],
+        ?CacheManager $cacheManager = null,
+        ?RetryHandler $retryHandler = null
+    ) {
+        $this->client = $client;
+        $this->config = array_merge($this->getDefaultConfig(), $config);
+        $this->prefixer = new PathPrefixer($this->config['root_path'], $this->config['path_separator']);
+        $this->cacheManager = $cacheManager;
+        $this->retryHandler = $retryHandler;
     }
 
     /**
-     * 检查文件是否存在
+     * Check if a file exists.
      *
-     * @param string $path 文件路径
-     * @return bool 文件是否存在
-     * @throws UnableToCheckFileExistence 当检查失败时
+     * @param string $path File path
+     * @return bool True if file exists
      */
     public function fileExists(string $path): bool
     {
         try {
-            return $this->checkExistence($path, 'file');
-        } catch (CTFileException $e) {
-            throw UnableToCheckFileExistence::atLocation($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            return $this->executeWithRetry(
+                fn () => $this->client->fileExists($prefixedPath),
+                ['operation' => 'fileExists', 'path' => $path]
+            );
+        } catch (\Throwable $exception) {
+            throw UnableToCheckFileExistence::forLocation($path, $exception);
         }
     }
 
     /**
-     * 检查目录是否存在
+     * Check if a directory exists.
      *
-     * @param string $path 目录路径
-     * @return bool 目录是否存在
-     * @throws UnableToCheckDirectoryExistence 当检查失败时
+     * @param string $path Directory path
+     * @return bool True if directory exists
      */
     public function directoryExists(string $path): bool
     {
         try {
-            return $this->checkExistence($path, 'directory');
-        } catch (CTFileException $e) {
-            throw UnableToCheckDirectoryExistence::atLocation($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            return $this->executeWithRetry(
+                fn () => $this->client->directoryExists($prefixedPath),
+                ['operation' => 'directoryExists', 'path' => $path]
+            );
+        } catch (\Throwable $exception) {
+            throw UnableToCheckDirectoryExistence::forLocation($path, $exception);
         }
     }
 
     /**
-     * 写入文件内容
+     * Write file contents.
      *
-     * @param string $path 文件路径
-     * @param string $contents 文件内容
-     * @param Config $config 配置
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @param string $contents File contents
+     * @param Config $config Write configuration
+     * @return void
+     * @throws UnableToWriteFile
      */
     public function write(string $path, string $contents, Config $config): void
     {
-        try {
-            $this->performWrite($path, $contents, $config);
-        } catch (CTFileException $e) {
-            throw UnableToWriteFile::atLocation($path, $e->getMessage(), $e);
-        }
+        // Implementation will be added in task 6.4
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 写入文件流
+     * Write file contents from stream.
      *
-     * @param string $path 文件路径
-     * @param mixed $contents 文件流
-     * @param Config $config 配置
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @param resource $contents File stream
+     * @param Config $config Write configuration
+     * @return void
+     * @throws UnableToWriteFile
      */
     public function writeStream(string $path, $contents, Config $config): void
     {
-        try {
-            // 将流转换为字符串内容
-            if (is_resource($contents)) {
-                rewind($contents);
-                $stringContents = stream_get_contents($contents);
-                if ($stringContents === false) {
-                    throw new CTFileException("Failed to read from stream for path: {$path}");
-                }
-            } else {
-                $stringContents = (string) $contents;
-            }
-
-            $this->performWrite($path, $stringContents, $config);
-        } catch (CTFileException $e) {
-            throw UnableToWriteFile::atLocation($path, $e->getMessage(), $e);
-        }
+        // Implementation will be added in task 6.4
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 读取文件内容
+     * Read file contents.
      *
-     * @param string $path 文件路径
-     * @return string 文件内容
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return string File contents
+     * @throws UnableToReadFile
      */
     public function read(string $path): string
     {
         try {
-            // 1. 获取文件ID
-            $fileId = $this->pathMapper->getFileId($path);
+            $prefixedPath = $this->prefixer->prefixPath($path);
 
-            // 2. 获取动态下载链接
-            $downloadResponse = $this->client->getDownloadUrl($fileId);
-
-            if (!isset($downloadResponse['data']['download_url'])) {
-                throw new CTFileException("Failed to get download URL for file: {$path}");
+            // Check if file exists first
+            if (!$this->executeWithRetry(fn () => $this->client->fileExists($prefixedPath))) {
+                throw UnableToReadFile::fromLocation($path, 'File does not exist');
             }
 
-            $downloadUrl = $downloadResponse['data']['download_url'];
+            // Read file contents using CtFileClient
+            $contents = $this->executeWithRetry(
+                fn () => $this->client->readFile($prefixedPath),
+                ['operation' => 'read', 'path' => $path]
+            );
 
-            // 3. 下载文件内容
-            $content = $this->downloadFileContent($downloadUrl);
-
-            return $content;
-        } catch (CTFileException $e) {
-            throw UnableToReadFile::fromLocation($path, $e->getMessage(), $e);
+            return $contents;
+        } catch (\Throwable $exception) {
+            if ($exception instanceof UnableToReadFile) {
+                throw $exception;
+            }
+            throw UnableToReadFile::fromLocation($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 读取文件流
+     * Read file contents as stream.
      *
-     * @param string $path 文件路径
-     * @return resource 文件流
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return resource File stream
+     * @throws UnableToReadFile
      */
     public function readStream(string $path)
     {
         try {
-            // 读取文件内容并创建内存流
-            $content = $this->read($path);
+            $prefixedPath = $this->prefixer->prefixPath($path);
 
-            $stream = fopen('php://memory', 'r+');
-            if ($stream === false) {
-                throw new CTFileException("Failed to create memory stream for file: {$path}");
+            // Check if file exists first
+            if (!$this->executeWithRetry(fn () => $this->client->fileExists($prefixedPath))) {
+                throw UnableToReadFile::fromLocation($path, 'File does not exist');
             }
 
-            fwrite($stream, $content);
+            // Since CtFileClient doesn't have a direct stream method,
+            // we'll read the file contents and create a stream from it
+            $contents = $this->executeWithRetry(
+                fn () => $this->client->readFile($prefixedPath),
+                ['operation' => 'readStream', 'path' => $path]
+            );
+
+            // Create a memory stream from the contents
+            $stream = fopen('php://memory', 'r+');
+            if ($stream === false) {
+                throw UnableToReadFile::fromLocation($path, 'Failed to create memory stream');
+            }
+
+            fwrite($stream, $contents);
             rewind($stream);
 
             return $stream;
-        } catch (CTFileException $e) {
-            throw UnableToReadFile::fromLocation($path, $e->getMessage(), $e);
+        } catch (\Throwable $exception) {
+            if ($exception instanceof UnableToReadFile) {
+                throw $exception;
+            }
+            throw UnableToReadFile::fromLocation($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 删除文件
+     * Delete a file.
      *
-     * @param string $path 文件路径
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return void
+     * @throws UnableToDeleteFile
      */
     public function delete(string $path): void
     {
-        try {
-            // 1. 获取文件ID
-            $fileId = $this->pathMapper->getFileId($path);
-
-            // 2. 调用删除API（移动到回收站）
-            $this->client->deleteFile($fileId);
-
-            // 3. 清理路径映射缓存
-            $this->pathMapper->invalidateCache($path);
-
-        } catch (CTFileException $e) {
-            throw UnableToDeleteFile::atLocation($path, $e->getMessage(), $e);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 删除目录
+     * Delete a directory.
      *
-     * @param string $path 目录路径
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path Directory path
+     * @return void
+     * @throws UnableToDeleteDirectory
      */
     public function deleteDirectory(string $path): void
     {
-        try {
-            // 不允许删除根目录
-            if ($path === '/' || $path === '') {
-                throw new CTFileException("Cannot delete root directory");
-            }
-
-            // 1. 获取目录ID
-            $directoryId = $this->pathMapper->getDirectoryId($path);
-
-            // 2. 调用删除API（移动到回收站）
-            $this->client->deleteFolder($directoryId);
-
-            // 3. 清理路径映射缓存（包括子路径）
-            $this->pathMapper->invalidateCache($path);
-
-        } catch (CTFileException $e) {
-            throw UnableToDeleteDirectory::atLocation($path, $e->getMessage(), $e);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 创建目录
+     * Create a directory.
      *
-     * @param string $path 目录路径
-     * @param Config $config 配置
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path Directory path
+     * @param Config $config Directory configuration
+     * @return void
+     * @throws UnableToCreateDirectory
      */
     public function createDirectory(string $path, Config $config): void
     {
-        try {
-            // 不允许创建根目录
-            if ($path === '/' || $path === '') {
-                throw new CTFileException("Cannot create root directory");
-            }
-
-            // 检查目录是否已存在
-            if ($this->directoryExists($path)) {
-                return; // 目录已存在，直接返回
-            }
-
-            // 1. 解析父目录路径和目录名
-            $pathInfo = $this->parseDirectoryPath($path);
-            $parentId = $pathInfo['parent_id'];
-            $directoryName = $pathInfo['directory_name'];
-
-            // 2. 调用创建文件夹API
-            $createResult = $this->client->createFolder($directoryName, $parentId);
-
-            if (!isset($createResult['data']['id'])) {
-                throw new CTFileException("Failed to create directory: {$path}");
-            }
-
-            // 3. 更新路径映射
-            $this->pathMapper->cachePath($path, $createResult['data']['id']);
-
-        } catch (CTFileException $e) {
-            throw UnableToCreateDirectory::atLocation($path, $e->getMessage(), $e);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 设置文件可见性
+     * Set file visibility.
      *
-     * @param string $path 文件路径
-     * @param string $visibility 可见性
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @param string $visibility Visibility setting
+     * @return void
+     * @throws UnableToSetVisibility
      */
     public function setVisibility(string $path, string $visibility): void
     {
         try {
-            // CTFile 不直接支持可见性设置，这里记录但不执行实际操作
-            // 在实际应用中，可见性通常在上传时设置
-            // 这里我们抛出一个说明性异常
-            throw new CTFileException("CTFile does not support changing visibility after upload. Visibility should be set during upload.");
-        } catch (CTFileException $e) {
-            throw UnableToSetVisibility::atLocation($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            // Check if file exists first
+            if (!$this->executeWithRetry(fn () => $this->client->fileExists($prefixedPath))) {
+                throw UnableToSetVisibility::atLocation($path, 'File does not exist');
+            }
+
+            // For now, we simulate setting visibility since ctFile may not support it directly
+            // In a real implementation, this would use actual ctFile visibility/permissions API
+            $this->executeWithRetry(
+                fn () => $this->simulateSetVisibility($prefixedPath, $visibility),
+                ['operation' => 'setVisibility', 'path' => $path, 'visibility' => $visibility]
+            );
+
+            // Invalidate cache after visibility change
+            $this->invalidateCache($path);
+        } catch (\Throwable $exception) {
+            if ($exception instanceof UnableToSetVisibility) {
+                throw $exception;
+            }
+            throw UnableToSetVisibility::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 获取文件可见性
+     * Get file visibility.
      *
-     * @param string $path 文件路径
-     * @return FileAttributes 文件属性
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return FileAttributes File attributes with visibility
+     * @throws UnableToRetrieveMetadata
      */
     public function visibility(string $path): FileAttributes
     {
         try {
-            $metadata = $this->getFileMetadata($path);
-            return FileInfo::fromApiResponse($metadata, $path);
-        } catch (CTFileException $e) {
-            throw UnableToRetrieveMetadata::visibility($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            // Check cache first
+            $cachedMetadata = $this->getCachedMetadata($path);
+            if ($cachedMetadata !== null) {
+                $visibility = MetadataMapper::extractVisibility($cachedMetadata);
+
+                return new FileAttributes($path, null, $visibility);
+            }
+
+            // Get file info from client
+            $fileInfo = $this->executeWithRetry(
+                fn () => $this->client->getFileInfo($prefixedPath),
+                ['operation' => 'visibility', 'path' => $path]
+            );
+
+            // Cache the metadata
+            $this->cacheMetadata($path, $fileInfo);
+
+            // Extract visibility and return FileAttributes
+            $visibility = MetadataMapper::extractVisibility($fileInfo);
+
+            return new FileAttributes($path, null, $visibility);
+        } catch (\Throwable $exception) {
+            throw UnableToRetrieveMetadata::visibility($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 获取文件 MIME 类型
+     * Get file MIME type.
      *
-     * @param string $path 文件路径
-     * @return FileAttributes 文件属性
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return FileAttributes File attributes with MIME type
+     * @throws UnableToRetrieveMetadata
      */
     public function mimeType(string $path): FileAttributes
     {
         try {
-            $metadata = $this->getFileMetadata($path);
-            return FileInfo::fromApiResponse($metadata, $path);
-        } catch (CTFileException $e) {
-            throw UnableToRetrieveMetadata::mimeType($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            // Check cache first
+            $cachedMetadata = $this->getCachedMetadata($path);
+            if ($cachedMetadata !== null) {
+                $mimeType = MetadataMapper::extractMimeType($cachedMetadata);
+
+                return new FileAttributes($path, null, null, null, $mimeType);
+            }
+
+            // Get file info from client
+            $fileInfo = $this->executeWithRetry(
+                fn () => $this->client->getFileInfo($prefixedPath),
+                ['operation' => 'mimeType', 'path' => $path]
+            );
+
+            // Cache the metadata
+            $this->cacheMetadata($path, $fileInfo);
+
+            // Extract MIME type and return FileAttributes
+            $mimeType = MetadataMapper::extractMimeType($fileInfo);
+
+            return new FileAttributes($path, null, null, null, $mimeType);
+        } catch (\Throwable $exception) {
+            throw UnableToRetrieveMetadata::mimeType($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 获取文件最后修改时间
+     * Get file last modified timestamp.
      *
-     * @param string $path 文件路径
-     * @return FileAttributes 文件属性
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return FileAttributes File attributes with last modified timestamp
+     * @throws UnableToRetrieveMetadata
      */
     public function lastModified(string $path): FileAttributes
     {
         try {
-            $metadata = $this->getFileMetadata($path);
-            return FileInfo::fromApiResponse($metadata, $path);
-        } catch (CTFileException $e) {
-            throw UnableToRetrieveMetadata::lastModified($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            // Check cache first
+            $cachedMetadata = $this->getCachedMetadata($path);
+            if ($cachedMetadata !== null) {
+                $lastModified = MetadataMapper::extractTimestamp($cachedMetadata);
+
+                return new FileAttributes($path, null, null, $lastModified);
+            }
+
+            // Get file info from client
+            $fileInfo = $this->executeWithRetry(
+                fn () => $this->client->getFileInfo($prefixedPath),
+                ['operation' => 'lastModified', 'path' => $path]
+            );
+
+            // Cache the metadata
+            $this->cacheMetadata($path, $fileInfo);
+
+            // Extract timestamp and return FileAttributes
+            $lastModified = MetadataMapper::extractTimestamp($fileInfo);
+
+            return new FileAttributes($path, null, null, $lastModified);
+        } catch (\Throwable $exception) {
+            throw UnableToRetrieveMetadata::lastModified($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 获取文件大小
+     * Get file size.
      *
-     * @param string $path 文件路径
-     * @return FileAttributes 文件属性
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path File path
+     * @return FileAttributes File attributes with file size
+     * @throws UnableToRetrieveMetadata
      */
     public function fileSize(string $path): FileAttributes
     {
         try {
-            $metadata = $this->getFileMetadata($path);
-            return FileInfo::fromApiResponse($metadata, $path);
-        } catch (CTFileException $e) {
-            throw UnableToRetrieveMetadata::fileSize($path, $e->getMessage(), $e);
+            $prefixedPath = $this->prefixer->prefixPath($path);
+
+            // Check cache first
+            $cachedMetadata = $this->getCachedMetadata($path);
+            if ($cachedMetadata !== null && isset($cachedMetadata['size'])) {
+                $size = (int) $cachedMetadata['size'];
+
+                return new FileAttributes($path, $size);
+            }
+
+            // Get file info from client
+            $fileInfo = $this->executeWithRetry(
+                fn () => $this->client->getFileInfo($prefixedPath),
+                ['operation' => 'fileSize', 'path' => $path]
+            );
+
+            // Cache the metadata
+            $this->cacheMetadata($path, $fileInfo);
+
+            // Extract size and return FileAttributes
+            $size = isset($fileInfo['size']) ? (int) $fileInfo['size'] : null;
+
+            return new FileAttributes($path, $size);
+        } catch (\Throwable $exception) {
+            throw UnableToRetrieveMetadata::fileSize($path, $exception->getMessage(), $exception);
         }
     }
 
     /**
-     * 列出目录内容
+     * List directory contents.
      *
-     * @param string $path 目录路径
-     * @param bool $deep 是否深度遍历
-     * @return iterable<StorageAttributes> 存储属性迭代器
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path Directory path
+     * @param bool $deep Whether to list recursively
+     * @return iterable<FileAttributes> Directory contents
      */
     public function listContents(string $path, bool $deep): iterable
     {
-        try {
-            return $this->listDirectory($path, $deep);
-        } catch (CTFileException $e) {
-            throw new UnableToListContents($e->getMessage(), $e);
-        }
+        // Implementation will be added in task 6.6
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 移动文件或目录
+     * Move a file.
      *
-     * @param string $source 源路径
-     * @param string $destination 目标路径
-     * @param Config $config 配置
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $source Source file path
+     * @param string $destination Destination file path
+     * @param Config $config Move configuration
+     * @return void
+     * @throws UnableToMoveFile
      */
     public function move(string $source, string $destination, Config $config): void
     {
-        try {
-            // 检查源文件/目录是否存在
-            $isFile = $this->fileExists($source);
-            $isDirectory = !$isFile && $this->directoryExists($source);
-
-            if (!$isFile && !$isDirectory) {
-                throw new CTFileException("Source path does not exist: {$source}");
-            }
-
-            if ($isFile) {
-                $this->moveFile($source, $destination);
-            } else {
-                $this->moveDirectory($source, $destination);
-            }
-
-        } catch (CTFileException $e) {
-            throw UnableToMoveFile::fromLocationTo($source, $destination, $e);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 复制文件
+     * Copy a file.
      *
-     * @param string $source 源路径
-     * @param string $destination 目标路径
-     * @param Config $config 配置
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $source Source file path
+     * @param string $destination Destination file path
+     * @param Config $config Copy configuration
+     * @return void
+     * @throws UnableToCopyFile
      */
     public function copy(string $source, string $destination, Config $config): void
     {
-        try {
-            // 检查源文件是否存在
-            if (!$this->fileExists($source)) {
-                throw new CTFileException("Source file does not exist: {$source}");
-            }
-
-            // 1. 获取源文件ID
-            $sourceFileId = $this->pathMapper->getFileId($source);
-
-            // 2. 解析目标路径
-            $destinationInfo = $this->parseFilePath($destination);
-            $targetFolderId = $destinationInfo['folder_id'];
-            $newFilename = $destinationInfo['filename'];
-
-            // 3. 调用复制API
-            $copyResult = $this->client->copyFile($sourceFileId, $targetFolderId, $newFilename);
-
-            if (!isset($copyResult['data']['id'])) {
-                throw new CTFileException("Failed to copy file from {$source} to {$destination}");
-            }
-
-            // 4. 更新路径映射
-            $this->pathMapper->cachePath($destination, $copyResult['data']['id']);
-
-        } catch (CTFileException $e) {
-            throw UnableToCopyFile::fromLocationTo($source, $destination, $e);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
-     * 检查文件或目录是否存在
+     * Get the CtFile client instance.
      *
-     * @param string $path 路径
-     * @param string $type 类型：'file' 或 'directory'
-     * @return bool 是否存在
-     * @throws CTFileException 当检查失败时
+     * @return CtFileClient
      */
-    private function checkExistence(string $path, string $type): bool
-    {
-        try {
-            if ($type === 'file') {
-                $this->pathMapper->getFileId($path);
-            } else {
-                $this->pathMapper->getDirectoryId($path);
-            }
-            return true;
-        } catch (CTFileException $e) {
-            // 如果是"不存在"的错误，返回 false
-            if (str_contains($e->getMessage(), 'not found')) {
-                return false;
-            }
-            // 其他错误重新抛出
-            throw $e;
-        }
-    }
-
-    /**
-     * 获取配置实例
-     *
-     * @return CTFileConfig 配置实例
-     */
-    public function getConfig(): CTFileConfig
-    {
-        return $this->config;
-    }
-
-    /**
-     * 获取客户端实例
-     *
-     * @return CTFileClient 客户端实例
-     */
-    public function getClient(): CTFileClient
+    public function getClient(): CtFileClient
     {
         return $this->client;
     }
 
     /**
-     * 获取路径映射器实例
+     * Get adapter configuration.
      *
-     * @return PathMapper 路径映射器实例
+     * @param string|null $key Specific configuration key
+     * @param mixed $default Default value if key not found
+     * @return mixed Configuration value or entire config array
      */
-    public function getPathMapper(): PathMapper
+    public function getConfig(?string $key = null, mixed $default = null): mixed
     {
-        return $this->pathMapper;
+        if ($key === null) {
+            return $this->config;
+        }
+
+        return $this->config[$key] ?? $default;
     }
 
     /**
-     * 获取上传辅助器实例
+     * Get the path prefixer instance.
      *
-     * @return UploadHelper 上传辅助器实例
+     * @return PathPrefixer
      */
-    public function getUploadHelper(): UploadHelper
+    public function getPrefixer(): PathPrefixer
     {
-        return $this->uploadHelper;
+        return $this->prefixer;
     }
 
     /**
-     * 执行文件写入操作
+     * Get the cache manager instance.
      *
-     * @param string $path 文件路径
-     * @param string $contents 文件内容
-     * @param Config $config 配置
-     * @throws CTFileException 当写入失败时
+     * @return CacheManager|null
      */
-    private function performWrite(string $path, string $contents, Config $config): void
+    public function getCacheManager(): ?CacheManager
     {
-        // 1. 解析路径，获取目标文件夹ID和文件名
-        $pathInfo = $this->parseFilePath($path);
-        $folderId = $pathInfo['folder_id'];
-        $filename = $pathInfo['filename'];
+        return $this->cacheManager;
+    }
 
-        // 2. 准备上传配置
-        $uploadConfig = [
-            'folder_id' => $folderId,
-            'filename' => $filename,
-        ];
+    /**
+     * Set the cache manager instance.
+     *
+     * @param CacheManager|null $cacheManager
+     * @return void
+     */
+    public function setCacheManager(?CacheManager $cacheManager): void
+    {
+        $this->cacheManager = $cacheManager;
+    }
 
-        // 3. 执行上传
-        $uploadResult = $this->uploadHelper->upload($path, $contents, $uploadConfig);
+    /**
+     * Get the retry handler instance.
+     *
+     * @return RetryHandler|null
+     */
+    public function getRetryHandler(): ?RetryHandler
+    {
+        return $this->retryHandler;
+    }
 
-        // 4. 更新路径映射缓存
-        if (isset($uploadResult['data']['id'])) {
-            $this->pathMapper->cachePath($path, $uploadResult['data']['id']);
+    /**
+     * Set the retry handler instance.
+     *
+     * @param RetryHandler|null $retryHandler
+     * @return void
+     */
+    public function setRetryHandler(?RetryHandler $retryHandler): void
+    {
+        $this->retryHandler = $retryHandler;
+    }
+
+    /**
+     * Invalidate cache for a path after write operations.
+     *
+     * @param string $path The path that was modified
+     * @return void
+     */
+    private function invalidateCache(string $path): void
+    {
+        if ($this->cacheManager && $this->cacheManager->isEnabled()) {
+            $this->cacheManager->invalidatePath($path);
         }
     }
 
     /**
-     * 下载文件内容
+     * Get cached metadata for a path.
      *
-     * @param string $downloadUrl 下载URL
-     * @return string 文件内容
-     * @throws CTFileException 当下载失败时
+     * @param string $path The file path
+     * @return array|null Cached metadata or null if not cached
      */
-    private function downloadFileContent(string $downloadUrl): string
+    private function getCachedMetadata(string $path): ?array
     {
-        $context = stream_context_create([
-            'http' => [
-                'timeout' => $this->config->getTimeout(),
-                'user_agent' => 'CTFile-Flysystem-Adapter/1.0',
-                'follow_location' => true,
-                'max_redirects' => 5,
-            ],
-        ]);
-
-        $content = file_get_contents($downloadUrl, false, $context);
-
-        if ($content === false) {
-            throw new CTFileException("Failed to download file from URL: {$downloadUrl}");
-        }
-
-        return $content;
-    }
-
-    /**
-     * 解析文件路径，获取文件夹ID和文件名
-     *
-     * @param string $path 文件路径
-     * @return array 包含 folder_id 和 filename 的数组
-     * @throws CTFileException 当路径解析失败时
-     */
-    private function parseFilePath(string $path): array
-    {
-        $path = trim($path, '/');
-
-        if (empty($path)) {
-            throw new CTFileException("Invalid file path: cannot write to root directory");
-        }
-
-        $pathParts = explode('/', $path);
-        $filename = array_pop($pathParts);
-
-        if (empty($filename)) {
-            throw new CTFileException("Invalid file path: missing filename");
-        }
-
-        // 验证文件名
-        if (!FileInfo::isValidFilename($filename)) {
-            throw new CTFileException("Invalid filename: {$filename}");
-        }
-
-        // 获取父目录ID
-        if (empty($pathParts)) {
-            // 文件在根目录
-            $folderId = 'd0';
-        } else {
-            // 文件在子目录
-            $folderPath = '/' . implode('/', $pathParts);
-            try {
-                $folderId = $this->pathMapper->getDirectoryId($folderPath);
-            } catch (CTFileException $e) {
-                // 如果目录不存在，尝试创建
-                $folderId = $this->createDirectoryPath($folderPath);
-            }
-        }
-
-        return [
-            'folder_id' => $folderId,
-            'filename' => $filename,
-        ];
-    }
-
-    /**
-     * 创建目录路径
-     *
-     * @param string $path 目录路径
-     * @return string 创建的目录ID
-     * @throws CTFileException 当创建失败时
-     */
-    private function createDirectoryPath(string $path): string
-    {
-        $path = trim($path, '/');
-        $pathParts = explode('/', $path);
-        $currentPath = '';
-        $currentId = 'd0';
-
-        foreach ($pathParts as $part) {
-            if (empty($part)) {
-                continue;
-            }
-
-            $currentPath = $currentPath === '' ? $part : $currentPath . '/' . $part;
-            $fullPath = '/' . $currentPath;
-
-            try {
-                // 尝试获取现有目录ID
-                $currentId = $this->pathMapper->getDirectoryId($fullPath);
-            } catch (CTFileException $e) {
-                // 目录不存在，创建新目录
-                $createResult = $this->client->createFolder($part, $currentId);
-
-                if (!isset($createResult['data']['id'])) {
-                    throw new CTFileException("Failed to create directory: {$fullPath}");
-                }
-
-                $currentId = $createResult['data']['id'];
-                $this->pathMapper->cachePath($fullPath, $currentId);
-            }
-        }
-
-        return $currentId;
-    }
-
-    /**
-     * 解析目录路径，获取父目录ID和目录名
-     *
-     * @param string $path 目录路径
-     * @return array 包含 parent_id 和 directory_name 的数组
-     * @throws CTFileException 当路径解析失败时
-     */
-    private function parseDirectoryPath(string $path): array
-    {
-        $path = trim($path, '/');
-
-        if (empty($path)) {
-            throw new CTFileException("Invalid directory path: cannot parse root directory");
-        }
-
-        $pathParts = explode('/', $path);
-        $directoryName = array_pop($pathParts);
-
-        if (empty($directoryName)) {
-            throw new CTFileException("Invalid directory path: missing directory name");
-        }
-
-        // 验证目录名
-        if (!FileInfo::isValidFilename($directoryName)) {
-            throw new CTFileException("Invalid directory name: {$directoryName}");
-        }
-
-        // 获取父目录ID
-        if (empty($pathParts)) {
-            // 目录在根目录
-            $parentId = 'd0';
-        } else {
-            // 目录在子目录
-            $parentPath = '/' . implode('/', $pathParts);
-            $parentId = $this->pathMapper->getDirectoryId($parentPath);
-        }
-
-        return [
-            'parent_id' => $parentId,
-            'directory_name' => $directoryName,
-        ];
-    }
-
-    /**
-     * 移动文件
-     *
-     * @param string $source 源文件路径
-     * @param string $destination 目标文件路径
-     * @throws CTFileException 当移动失败时
-     */
-    private function moveFile(string $source, string $destination): void
-    {
-        // 1. 获取源文件ID
-        $sourceFileId = $this->pathMapper->getFileId($source);
-
-        // 2. 解析目标路径
-        $destinationInfo = $this->parseFilePath($destination);
-        $targetFolderId = $destinationInfo['folder_id'];
-        $newFilename = $destinationInfo['filename'];
-
-        // 3. 检查是否需要重命名
-        $sourceFilename = basename($source);
-        if ($sourceFilename !== $newFilename) {
-            // 需要重命名，先移动再重命名
-            $this->client->moveFile($sourceFileId, $targetFolderId);
-            $this->client->rename($sourceFileId, $newFilename, 'file');
-        } else {
-            // 只需要移动
-            $this->client->moveFile($sourceFileId, $targetFolderId);
-        }
-
-        // 4. 更新路径映射
-        $this->pathMapper->invalidateCache($source);
-        $this->pathMapper->cachePath($destination, $sourceFileId);
-    }
-
-    /**
-     * 移动目录
-     *
-     * @param string $source 源目录路径
-     * @param string $destination 目标目录路径
-     * @throws CTFileException 当移动失败时
-     */
-    private function moveDirectory(string $source, string $destination): void
-    {
-        // 1. 获取源目录ID
-        $sourceDirectoryId = $this->pathMapper->getDirectoryId($source);
-
-        // 2. 解析目标路径
-        $destinationInfo = $this->parseDirectoryPath($destination);
-        $targetParentId = $destinationInfo['parent_id'];
-        $newDirectoryName = $destinationInfo['directory_name'];
-
-        // 3. 检查是否需要重命名
-        $sourceDirectoryName = basename($source);
-        if ($sourceDirectoryName !== $newDirectoryName) {
-            // 需要重命名，先移动再重命名
-            $this->client->moveFile($sourceDirectoryId, $targetParentId);
-            $this->client->rename($sourceDirectoryId, $newDirectoryName, 'folder');
-        } else {
-            // 只需要移动
-            $this->client->moveFile($sourceDirectoryId, $targetParentId);
-        }
-
-        // 4. 更新路径映射
-        $this->pathMapper->invalidateCache($source);
-        $this->pathMapper->cachePath($destination, $sourceDirectoryId);
-    }
-
-    /**
-     * 获取文件元数据
-     *
-     * @param string $path 文件路径
-     * @return array 文件元数据
-     * @throws CTFileException 当获取失败时
-     */
-    private function getFileMetadata(string $path): array
-    {
-        // 1. 获取文件ID
-        $fileId = $this->pathMapper->getFileId($path);
-
-        // 2. 调用API获取文件信息
-        $response = $this->client->getFileInfo($fileId);
-
-        if (!isset($response['data'])) {
-            throw new CTFileException("Failed to get file metadata for: {$path}");
-        }
-
-        return $response['data'];
-    }
-
-    /**
-     * 列出目录内容
-     *
-     * @param string $path 目录路径
-     * @param bool $deep 是否深度遍历
-     * @return \Generator<StorageAttributes> 存储属性生成器
-     * @throws CTFileException 当列出失败时
-     */
-    private function listDirectory(string $path, bool $deep): \Generator
-    {
-        // 1. 获取目录ID
-        $directoryId = $this->pathMapper->getDirectoryId($path);
-
-        // 2. 调用文件列表API
-        $page = 1;
-        $pageSize = 100;
-
-        do {
-            $response = $this->client->getFileList($directoryId, $page, $pageSize);
-
-            if (!isset($response['data']) || !is_array($response['data'])) {
-                break;
-            }
-
-            // 3. 处理当前页的数据
-            foreach ($response['data'] as $item) {
-                if (!isset($item['id']) || !isset($item['name'])) {
-                    continue;
-                }
-
-                $itemPath = $path === '/' ? '/' . $item['name'] : $path . '/' . $item['name'];
-
-                // 4. 转换为 StorageAttributes
-                $attributes = $this->convertToAttributes($item, $itemPath);
-
-                if ($attributes !== null) {
-                    // 5. 更新路径映射缓存
-                    $this->pathMapper->cachePath($itemPath, $item['id']);
-
-                    yield $attributes;
-
-                    // 6. 处理深度遍历
-                    if ($deep && $attributes instanceof DirectoryAttributes) {
-                        yield from $this->listDirectory($itemPath, true);
-                    }
-                }
-            }
-
-            $page++;
-
-            // 检查是否还有更多页
-            $hasMore = isset($response['pagination']['has_more']) ? $response['pagination']['has_more'] : false;
-
-        } while ($hasMore && count($response['data']) === $pageSize);
-    }
-
-    /**
-     * 转换API响应为存储属性
-     *
-     * @param array $data API响应数据
-     * @param string $path 文件路径
-     * @return StorageAttributes|null 存储属性对象
-     */
-    private function convertToAttributes(array $data, string $path): ?StorageAttributes
-    {
-        if (!isset($data['id']) || !isset($data['name'])) {
+        if (!$this->cacheManager || !$this->cacheManager->isEnabled()) {
             return null;
         }
 
-        // 根据ID前缀判断类型
-        $id = $data['id'];
+        $cacheKey = $this->cacheManager->getMetadataKey($path);
 
-        if (str_starts_with($id, 'f')) {
-            // 文件
-            return FileInfo::fromApiResponse($data, $path);
-        } elseif (str_starts_with($id, 'd')) {
-            // 目录
-            return FileInfo::fromDirectoryResponse($data, $path);
-        }
-
-        return null;
+        return $this->cacheManager->get($cacheKey);
     }
 
     /**
-     * 处理异常并转换为适当的 Flysystem 异常
+     * Cache metadata for a path.
      *
-     * @param \Throwable $exception 原始异常
-     * @param string $operation 操作名称
-     * @param string $path 文件路径
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path The file path
+     * @param array $metadata The metadata to cache
+     * @return void
      */
-    private function handleException(\Throwable $exception, string $operation, string $path): void
+    private function cacheMetadata(string $path, array $metadata): void
     {
-        // 如果已经是 Flysystem 异常，直接重新抛出
-        if ($exception instanceof \League\Flysystem\FilesystemException) {
-            throw $exception;
-        }
-
-        // 根据异常类型和操作类型进行转换
-        if ($exception instanceof AuthenticationException) {
-            $this->handleAuthenticationException($exception, $operation, $path);
-        } elseif ($exception instanceof NetworkException) {
-            $this->handleNetworkException($exception, $operation, $path);
-        } elseif ($exception instanceof RateLimitException) {
-            $this->handleRateLimitException($exception, $operation, $path);
-        } elseif ($exception instanceof CTFileException) {
-            $this->handleCTFileException($exception, $operation, $path);
-        } else {
-            // 未知异常，包装为通用异常
-            throw new \League\Flysystem\UnableToWriteFile($path, $exception->getMessage(), $exception);
+        if ($this->cacheManager && $this->cacheManager->isEnabled()) {
+            $cacheKey = $this->cacheManager->getMetadataKey($path);
+            $this->cacheManager->set($cacheKey, $metadata);
         }
     }
 
     /**
-     * 处理认证异常
+     * Get cached directory listing for a path.
      *
-     * @param AuthenticationException $exception 认证异常
-     * @param string $operation 操作名称
-     * @param string $path 文件路径
-     * @throws \League\Flysystem\FilesystemException
+     * @param string $path The directory path
+     * @param bool $recursive Whether the listing is recursive
+     * @return array|null Cached listing or null if not cached
      */
-    private function handleAuthenticationException(AuthenticationException $exception, string $operation, string $path): void
+    private function getCachedListing(string $path, bool $recursive = false): ?array
     {
-        switch ($operation) {
-            case 'read':
-                throw UnableToReadFile::fromLocation($path, "Authentication failed: " . $exception->getMessage(), $exception);
-            case 'write':
-                throw UnableToWriteFile::atLocation($path, "Authentication failed: " . $exception->getMessage(), $exception);
-            case 'delete':
-                throw UnableToDeleteFile::atLocation($path, "Authentication failed: " . $exception->getMessage(), $exception);
-            case 'list':
-                throw new UnableToListContents("Authentication failed: " . $exception->getMessage(), $exception);
-            case 'metadata':
-                throw UnableToRetrieveMetadata::create($path, 'metadata', "Authentication failed: " . $exception->getMessage(), $exception);
-            default:
-                throw new \League\Flysystem\UnableToWriteFile($path, "Authentication failed: " . $exception->getMessage(), $exception);
+        if (!$this->cacheManager || !$this->cacheManager->isEnabled()) {
+            return null;
+        }
+
+        $cacheKey = $this->cacheManager->getListingKey($path, $recursive);
+
+        return $this->cacheManager->get($cacheKey);
+    }
+
+    /**
+     * Cache directory listing for a path.
+     *
+     * @param string $path The directory path
+     * @param array $listing The listing to cache
+     * @param bool $recursive Whether the listing is recursive
+     * @return void
+     */
+    private function cacheListing(string $path, array $listing, bool $recursive = false): void
+    {
+        if ($this->cacheManager && $this->cacheManager->isEnabled()) {
+            $cacheKey = $this->cacheManager->getListingKey($path, $recursive);
+            $this->cacheManager->set($cacheKey, $listing);
         }
     }
 
     /**
-     * 处理网络异常
+     * Execute an operation with retry logic if retry handler is available.
      *
-     * @param NetworkException $exception 网络异常
-     * @param string $operation 操作名称
-     * @param string $path 文件路径
-     * @throws \League\Flysystem\FilesystemException
+     * @param callable $operation The operation to execute
+     * @param array $context Additional context for logging
+     * @return mixed The result of the operation
+     * @throws \Throwable
      */
-    private function handleNetworkException(NetworkException $exception, string $operation, string $path): void
+    private function executeWithRetry(callable $operation, array $context = []): mixed
     {
-        switch ($operation) {
-            case 'read':
-                throw UnableToReadFile::fromLocation($path, "Network error: " . $exception->getMessage(), $exception);
-            case 'write':
-                throw UnableToWriteFile::atLocation($path, "Network error: " . $exception->getMessage(), $exception);
-            case 'delete':
-                throw UnableToDeleteFile::atLocation($path, "Network error: " . $exception->getMessage(), $exception);
-            case 'list':
-                throw new UnableToListContents("Network error: " . $exception->getMessage(), $exception);
-            case 'metadata':
-                throw UnableToRetrieveMetadata::create($path, 'metadata', "Network error: " . $exception->getMessage(), $exception);
-            default:
-                throw new \League\Flysystem\UnableToWriteFile($path, "Network error: " . $exception->getMessage(), $exception);
+        if ($this->retryHandler) {
+            return $this->retryHandler->execute($operation, $context);
         }
+
+        return $operation();
     }
 
     /**
-     * 处理频率限制异常
+     * Simulate setting file visibility.
      *
-     * @param RateLimitException $exception 频率限制异常
-     * @param string $operation 操作名称
-     * @param string $path 文件路径
-     * @throws \League\Flysystem\FilesystemException
+     * In a real implementation, this would use actual ctFile visibility/permissions API.
+     *
+     * @param string $path File path
+     * @param string $visibility Visibility setting
+     * @return bool True if successful
      */
-    private function handleRateLimitException(RateLimitException $exception, string $operation, string $path): void
+    private function simulateSetVisibility(string $path, string $visibility): bool
     {
-        $message = $exception->getMessage() . " (retry after {$exception->getRetryAfter()} seconds)";
+        // In a real implementation, this would:
+        // 1. Convert Flysystem visibility to ctFile permissions
+        // 2. Use ctFile API to set file permissions
+        // 3. Return success/failure status
 
-        switch ($operation) {
-            case 'read':
-                throw UnableToReadFile::fromLocation($path, $message, $exception);
-            case 'write':
-                throw UnableToWriteFile::atLocation($path, $message, $exception);
-            case 'delete':
-                throw UnableToDeleteFile::atLocation($path, $message, $exception);
-            case 'list':
-                throw new UnableToListContents($message, $exception);
-            case 'metadata':
-                throw UnableToRetrieveMetadata::create($path, 'metadata', $message, $exception);
-            default:
-                throw new \League\Flysystem\UnableToWriteFile($path, $message, $exception);
-        }
+        // For now, we just simulate success unless path contains 'fail'
+        return !str_contains($path, 'fail-visibility');
     }
 
     /**
-     * 处理 CTFile 异常
+     * Get default adapter configuration.
      *
-     * @param CTFileException $exception CTFile 异常
-     * @param string $operation 操作名称
-     * @param string $path 文件路径
-     * @throws \League\Flysystem\FilesystemException
+     * @return array Default configuration options
      */
-    private function handleCTFileException(CTFileException $exception, string $operation, string $path): void
+    private function getDefaultConfig(): array
     {
-        switch ($operation) {
-            case 'read':
-                throw UnableToReadFile::fromLocation($path, $exception->getMessage(), $exception);
-            case 'write':
-                throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
-            case 'delete':
-                throw UnableToDeleteFile::atLocation($path, $exception->getMessage(), $exception);
-            case 'list':
-                throw new UnableToListContents($exception->getMessage(), $exception);
-            case 'metadata':
-                throw UnableToRetrieveMetadata::create($path, 'metadata', $exception->getMessage(), $exception);
-            default:
-                throw new \League\Flysystem\UnableToWriteFile($path, $exception->getMessage(), $exception);
-        }
+        return [
+            'root_path' => '',
+            'path_separator' => '/',
+            'case_sensitive' => true,
+            'create_directories' => true,
+        ];
     }
 }

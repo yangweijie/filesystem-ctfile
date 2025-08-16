@@ -1,320 +1,659 @@
 <?php
 
-use Yangweijie\FilesystemCtlife\CTFileAdapter;
-use Yangweijie\FilesystemCtlife\CTFileConfig;
-use Yangweijie\FilesystemCtlife\CTFileClient;
-use Yangweijie\FilesystemCtlife\PathMapper;
-use Yangweijie\FilesystemCtlife\Support\UploadHelper;
+declare(strict_types=1);
+
+namespace YangWeijie\FilesystemCtfile\Tests\Unit;
+
+use League\Flysystem\Config;
 use League\Flysystem\FilesystemAdapter;
-use League\Flysystem\UnableToCheckFileExistence;
+use League\Flysystem\PathPrefixer;
 use League\Flysystem\UnableToCheckDirectoryExistence;
+use League\Flysystem\UnableToCheckFileExistence;
+use Mockery;
+use PHPUnit\Framework\TestCase;
+use YangWeijie\FilesystemCtfile\CtFileAdapter;
+use YangWeijie\FilesystemCtfile\CtFileClient;
+use YangWeijie\FilesystemCtfile\Exceptions\CtFileOperationException;
 
-describe('CTFileAdapter', function () {
-    beforeEach(function () {
-        $this->config = new CTFileConfig([
-            'session' => 'test_session_token_123456',
-            'app_id' => 'test_app_id',
-        ]);
-        
-        $this->adapter = new CTFileAdapter($this->config);
-    });
+/**
+ * Unit tests for CtFileAdapter class.
+ */
+class CtFileAdapterTest extends TestCase
+{
+    private CtFileClient $mockClient;
 
-    it('can be instantiated with config', function () {
-        expect($this->adapter)->toBeInstanceOf(CTFileAdapter::class);
-        expect($this->adapter)->toBeInstanceOf(FilesystemAdapter::class);
-    });
+    private CtFileAdapter $adapter;
 
-    it('has correct dependencies injected', function () {
-        expect($this->adapter->getConfig())->toBeInstanceOf(CTFileConfig::class);
-        expect($this->adapter->getClient())->toBeInstanceOf(CTFileClient::class);
-        expect($this->adapter->getPathMapper())->toBeInstanceOf(PathMapper::class);
-        expect($this->adapter->getUploadHelper())->toBeInstanceOf(UploadHelper::class);
-    });
+    protected function setUp(): void
+    {
+        parent::setUp();
 
-    it('can check directory existence for root directory', function () {
-        // 根目录应该总是存在
-        expect($this->adapter->directoryExists('/'))->toBeTrue();
-        expect($this->adapter->directoryExists(''))->toBeTrue();
-    });
+        $this->mockClient = Mockery::mock(CtFileClient::class);
+        $this->adapter = new CtFileAdapter($this->mockClient);
+    }
 
-    it('returns false for non-existent files', function () {
-        // 对于不存在的文件，应该返回 false 而不是抛出异常
-        expect($this->adapter->fileExists('/non/existent/file.txt'))->toBeFalse();
-    });
+    public function test_implements_filesystem_adapter_interface(): void
+    {
+        $this->assertInstanceOf(FilesystemAdapter::class, $this->adapter);
+    }
 
-    it('returns false for non-existent directories', function () {
-        // 对于不存在的目录，应该返回 false 而不是抛出异常
-        expect($this->adapter->directoryExists('/non/existent/directory'))->toBeFalse();
-    });
+    public function test_constructor_with_default_config(): void
+    {
+        $adapter = new CtFileAdapter($this->mockClient);
 
-    it('throws exception when file existence check fails', function () {
-        // 测试基本的异常处理逻辑
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('checkExistence');
-        $method->setAccessible(true);
+        $config = $adapter->getConfig();
 
-        // 测试根目录存在检查
-        $result = $method->invoke($this->adapter, '/', 'directory');
-        expect($result)->toBeTrue(); // 根目录应该存在
-    });
+        $this->assertEquals('', $config['root_path']);
+        $this->assertEquals('/', $config['path_separator']);
+        $this->assertTrue($config['case_sensitive']);
+        $this->assertTrue($config['create_directories']);
+    }
 
-    it('has all required FilesystemAdapter methods', function () {
-        $requiredMethods = [
-            'fileExists',
-            'directoryExists',
-            'write',
-            'writeStream',
-            'read',
-            'readStream',
-            'delete',
-            'deleteDirectory',
-            'createDirectory',
-            'setVisibility',
-            'visibility',
-            'mimeType',
-            'lastModified',
-            'fileSize',
-            'listContents',
-            'move',
-            'copy',
+    public function test_constructor_with_custom_config(): void
+    {
+        $customConfig = [
+            'root_path' => '/custom/root',
+            'path_separator' => '\\',
+            'case_sensitive' => false,
+            'create_directories' => false,
         ];
 
-        foreach ($requiredMethods as $method) {
-            expect(method_exists($this->adapter, $method))->toBeTrue();
-        }
-    });
+        $adapter = new CtFileAdapter($this->mockClient, $customConfig);
 
-    it('has metadata operation methods', function () {
-        // 验证元数据操作方法存在
-        $metadataMethods = ['mimeType', 'fileSize', 'lastModified', 'visibility', 'setVisibility', 'listContents'];
-        foreach ($metadataMethods as $method) {
-            expect(method_exists($this->adapter, $method))->toBeTrue();
-        }
+        $config = $adapter->getConfig();
 
-        // 验证私有辅助方法存在
-        $privateMethods = ['getFileMetadata', 'listDirectory', 'convertToAttributes'];
-        foreach ($privateMethods as $method) {
-            expect(method_exists($this->adapter, $method))->toBeTrue();
-        }
-    });
+        $this->assertEquals('/custom/root', $config['root_path']);
+        $this->assertEquals('\\', $config['path_separator']);
+        $this->assertFalse($config['case_sensitive']);
+        $this->assertFalse($config['create_directories']);
+    }
 
-    it('can access internal components', function () {
-        // 测试可以访问内部组件
-        $config = $this->adapter->getConfig();
-        expect($config->getSession())->toBe('test_session_token_123456');
-        expect($config->getAppId())->toBe('test_app_id');
-
+    public function test_get_client_returns_injected_client(): void
+    {
         $client = $this->adapter->getClient();
-        expect($client)->toBeInstanceOf(CTFileClient::class);
 
-        $pathMapper = $this->adapter->getPathMapper();
-        expect($pathMapper)->toBeInstanceOf(PathMapper::class);
+        $this->assertSame($this->mockClient, $client);
+    }
 
-        $uploadHelper = $this->adapter->getUploadHelper();
-        expect($uploadHelper)->toBeInstanceOf(UploadHelper::class);
-    });
+    public function test_get_config_returns_all_config_when_no_key(): void
+    {
+        $config = $this->adapter->getConfig();
 
-    it('handles checkExistence method correctly', function () {
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('checkExistence');
-        $method->setAccessible(true);
+        $this->assertIsArray($config);
+        $this->assertArrayHasKey('root_path', $config);
+        $this->assertArrayHasKey('path_separator', $config);
+        $this->assertArrayHasKey('case_sensitive', $config);
+        $this->assertArrayHasKey('create_directories', $config);
+    }
 
-        // 测试根目录存在
-        $result = $method->invoke($this->adapter, '/', 'directory');
-        expect($result)->toBeTrue();
+    public function test_get_config_returns_specific_value_when_key_provided(): void
+    {
+        $rootPath = $this->adapter->getConfig('root_path');
+        $pathSeparator = $this->adapter->getConfig('path_separator');
 
-        // 测试空路径（也是根目录）
-        $result = $method->invoke($this->adapter, '', 'directory');
-        expect($result)->toBeTrue();
-    });
+        $this->assertEquals('', $rootPath);
+        $this->assertEquals('/', $pathSeparator);
+    }
 
-    it('properly initializes all dependencies', function () {
-        // 验证所有依赖都正确初始化
-        expect($this->adapter->getConfig())->not->toBeNull();
-        expect($this->adapter->getClient())->not->toBeNull();
-        expect($this->adapter->getPathMapper())->not->toBeNull();
-        expect($this->adapter->getUploadHelper())->not->toBeNull();
+    public function test_get_config_returns_default_when_key_not_found(): void
+    {
+        $value = $this->adapter->getConfig('nonexistent_key', 'default_value');
 
-        // 验证依赖之间的关系
-        expect($this->adapter->getClient())->toBeInstanceOf(CTFileClient::class);
-        expect($this->adapter->getPathMapper())->toBeInstanceOf(PathMapper::class);
-        expect($this->adapter->getUploadHelper())->toBeInstanceOf(UploadHelper::class);
-    });
+        $this->assertEquals('default_value', $value);
+    }
 
-    it('can parse file paths correctly', function () {
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('parseFilePath');
-        $method->setAccessible(true);
+    public function test_get_prefixer_returns_path_prefixer_instance(): void
+    {
+        $prefixer = $this->adapter->getPrefixer();
 
-        // 测试根目录文件
-        $result = $method->invoke($this->adapter, '/test.txt');
-        expect($result['folder_id'])->toBe('d0');
-        expect($result['filename'])->toBe('test.txt');
+        $this->assertInstanceOf(PathPrefixer::class, $prefixer);
+    }
 
-        // 测试子目录文件（可能会因为API调用失败而抛出异常，这是预期的）
-        try {
-            $result = $method->invoke($this->adapter, '/folder/test.txt');
-            expect($result['filename'])->toBe('test.txt');
-        } catch (Exception $e) {
-            // API 调用失败是预期的（使用测试凭据）
-            expect($e)->toBeInstanceOf(Exception::class);
-        }
-    });
+    public function test_file_exists_returns_true_when_file_exists(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
 
-    it('validates filenames correctly', function () {
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('parseFilePath');
-        $method->setAccessible(true);
+        $result = $this->adapter->fileExists('test.txt');
 
-        // 测试无效文件名
-        expect(fn() => $method->invoke($this->adapter, '/invalid/file.txt'))
-            ->toThrow(Exception::class);
+        $this->assertTrue($result);
+    }
 
-        // 测试空路径
-        expect(fn() => $method->invoke($this->adapter, '/'))
-            ->toThrow(Exception::class);
-    });
+    public function test_file_exists_returns_false_when_file_does_not_exist(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('nonexistent.txt')
+            ->andReturn(false);
 
-    it('handles file read/write operations', function () {
-        // 由于我们无法轻易模拟 API 响应，这里测试基本的方法存在性
-        expect(method_exists($this->adapter, 'write'))->toBeTrue();
-        expect(method_exists($this->adapter, 'writeStream'))->toBeTrue();
-        expect(method_exists($this->adapter, 'read'))->toBeTrue();
-        expect(method_exists($this->adapter, 'readStream'))->toBeTrue();
-    });
+        $result = $this->adapter->fileExists('nonexistent.txt');
 
-    it('can create memory stream for readStream', function () {
-        // 测试内存流创建逻辑
-        $content = 'test content';
+        $this->assertFalse($result);
+    }
+
+    public function test_file_exists_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Connection failed'));
+
+        $this->expectException(UnableToCheckFileExistence::class);
+
+        $this->adapter->fileExists('test.txt');
+    }
+
+    public function test_directory_exists_returns_true_when_directory_exists(): void
+    {
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with('test-dir')
+            ->andReturn(true);
+
+        $result = $this->adapter->directoryExists('test-dir');
+
+        $this->assertTrue($result);
+    }
+
+    public function test_directory_exists_returns_false_when_directory_does_not_exist(): void
+    {
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with('nonexistent-dir')
+            ->andReturn(false);
+
+        $result = $this->adapter->directoryExists('nonexistent-dir');
+
+        $this->assertFalse($result);
+    }
+
+    public function test_directory_exists_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with('test-dir')
+            ->andThrow(new CtFileOperationException('Connection failed'));
+
+        $this->expectException(UnableToCheckDirectoryExistence::class);
+
+        $this->adapter->directoryExists('test-dir');
+    }
+
+    public function test_file_exists_with_root_path_prefix(): void
+    {
+        $adapter = new CtFileAdapter($this->mockClient, ['root_path' => '/root']);
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('/root/test.txt')
+            ->andReturn(true);
+
+        $result = $adapter->fileExists('test.txt');
+
+        $this->assertTrue($result);
+    }
+
+    public function test_directory_exists_with_root_path_prefix(): void
+    {
+        $adapter = new CtFileAdapter($this->mockClient, ['root_path' => '/root']);
+
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with('/root/test-dir')
+            ->andReturn(true);
+
+        $result = $adapter->directoryExists('test-dir');
+
+        $this->assertTrue($result);
+    }
+
+    public function test_unimplemented_methods_throw_bad_method_call_exception(): void
+    {
+        $config = new Config();
+
+        // Test write methods
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->write('test.txt', 'content', $config);
+    }
+
+    public function test_write_stream_throws_bad_method_call_exception(): void
+    {
+        $config = new Config();
         $stream = fopen('php://memory', 'r+');
-        fwrite($stream, $content);
-        rewind($stream);
 
-        $readContent = stream_get_contents($stream);
-        expect($readContent)->toBe($content);
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->writeStream('test.txt', $stream, $config);
 
         fclose($stream);
-    });
+    }
 
-    it('can parse directory paths correctly', function () {
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('parseDirectoryPath');
-        $method->setAccessible(true);
+    // File read operation tests
 
-        // 测试根目录下的目录
-        $result = $method->invoke($this->adapter, '/testdir');
-        expect($result['parent_id'])->toBe('d0');
-        expect($result['directory_name'])->toBe('testdir');
+    public function test_read_returns_file_contents(): void
+    {
+        $expectedContent = 'Test file content';
 
-        // 测试嵌套目录
-        try {
-            $result = $method->invoke($this->adapter, '/parent/child');
-            expect($result['directory_name'])->toBe('child');
-        } catch (Exception $e) {
-            // API 调用失败是预期的（使用测试凭据）
-            expect($e)->toBeInstanceOf(Exception::class);
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('test.txt')
+            ->andReturn($expectedContent);
+
+        $result = $this->adapter->read('test.txt');
+
+        $this->assertEquals($expectedContent, $result);
+    }
+
+    public function test_read_throws_exception_when_file_does_not_exist(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('nonexistent.txt')
+            ->andReturn(false);
+
+        $this->expectException(\League\Flysystem\UnableToReadFile::class);
+        $this->expectExceptionMessage('File does not exist');
+
+        $this->adapter->read('nonexistent.txt');
+    }
+
+    public function test_read_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Read operation failed'));
+
+        $this->expectException(\League\Flysystem\UnableToReadFile::class);
+
+        $this->adapter->read('test.txt');
+    }
+
+    public function test_read_with_root_path_prefix(): void
+    {
+        $adapter = new CtFileAdapter($this->mockClient, ['root_path' => '/root']);
+        $expectedContent = 'Test file content';
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('/root/test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('/root/test.txt')
+            ->andReturn($expectedContent);
+
+        $result = $adapter->read('test.txt');
+
+        $this->assertEquals($expectedContent, $result);
+    }
+
+    public function test_read_stream_returns_stream_resource(): void
+    {
+        $expectedContent = 'Test file content for stream';
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('test.txt')
+            ->andReturn($expectedContent);
+
+        $result = $this->adapter->readStream('test.txt');
+
+        $this->assertIsResource($result);
+        $this->assertEquals('stream', get_resource_type($result));
+
+        // Read from the stream to verify content
+        $streamContent = stream_get_contents($result);
+        $this->assertEquals($expectedContent, $streamContent);
+
+        fclose($result);
+    }
+
+    public function test_read_stream_throws_exception_when_file_does_not_exist(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('nonexistent.txt')
+            ->andReturn(false);
+
+        $this->expectException(\League\Flysystem\UnableToReadFile::class);
+        $this->expectExceptionMessage('File does not exist');
+
+        $this->adapter->readStream('nonexistent.txt');
+    }
+
+    public function test_read_stream_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Read operation failed'));
+
+        $this->expectException(\League\Flysystem\UnableToReadFile::class);
+
+        $this->adapter->readStream('test.txt');
+    }
+
+    public function test_read_stream_with_root_path_prefix(): void
+    {
+        $adapter = new CtFileAdapter($this->mockClient, ['root_path' => '/root']);
+        $expectedContent = 'Test file content for stream with prefix';
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('/root/test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('/root/test.txt')
+            ->andReturn($expectedContent);
+
+        $result = $adapter->readStream('test.txt');
+
+        $this->assertIsResource($result);
+        $streamContent = stream_get_contents($result);
+        $this->assertEquals($expectedContent, $streamContent);
+
+        fclose($result);
+    }
+
+    public function test_read_stream_handles_large_files_efficiently(): void
+    {
+        // Test with a larger content to ensure memory stream works properly
+        $largeContent = str_repeat('This is a test line for large file content. ', 1000);
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('large-file.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('readFile')
+            ->once()
+            ->with('large-file.txt')
+            ->andReturn($largeContent);
+
+        $result = $this->adapter->readStream('large-file.txt');
+
+        $this->assertIsResource($result);
+
+        // Read in chunks to simulate streaming behavior
+        $readContent = '';
+        while (!feof($result)) {
+            $readContent .= fread($result, 1024);
         }
-    });
 
-    it('validates directory names correctly', function () {
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('parseDirectoryPath');
-        $method->setAccessible(true);
+        $this->assertEquals($largeContent, $readContent);
+        $this->assertEquals(strlen($largeContent), strlen($readContent));
 
-        // 测试无效目录名
-        expect(fn() => $method->invoke($this->adapter, '/invalid*dir'))
-            ->toThrow(Exception::class);
+        fclose($result);
+    }
 
-        // 测试空路径
-        expect(fn() => $method->invoke($this->adapter, '/'))
-            ->toThrow(Exception::class);
-    });
+    public function test_delete_throws_bad_method_call_exception(): void
+    {
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->delete('test.txt');
+    }
 
-    it('has management operation methods', function () {
-        // 验证管理操作方法存在
-        $managementMethods = ['delete', 'deleteDirectory', 'createDirectory', 'move', 'copy'];
-        foreach ($managementMethods as $method) {
-            expect(method_exists($this->adapter, $method))->toBeTrue();
-        }
+    public function test_delete_directory_throws_bad_method_call_exception(): void
+    {
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->deleteDirectory('test-dir');
+    }
 
-        // 验证私有辅助方法存在
-        $privateMethods = ['parseDirectoryPath', 'moveFile', 'moveDirectory'];
-        foreach ($privateMethods as $method) {
-            expect(method_exists($this->adapter, $method))->toBeTrue();
-        }
-    });
+    public function test_create_directory_throws_bad_method_call_exception(): void
+    {
+        $config = new Config();
 
-    it('handles root directory protection', function () {
-        // 测试根目录保护逻辑
-        $config = new \League\Flysystem\Config();
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->createDirectory('test-dir', $config);
+    }
 
-        // 不应该能够删除根目录
-        expect(fn() => $this->adapter->deleteDirectory('/'))
-            ->toThrow(Exception::class);
+    // Metadata methods tests
 
-        expect(fn() => $this->adapter->deleteDirectory(''))
-            ->toThrow(Exception::class);
-
-        // 不应该能够创建根目录
-        expect(fn() => $this->adapter->createDirectory('/', $config))
-            ->toThrow(Exception::class);
-
-        expect(fn() => $this->adapter->createDirectory('', $config))
-            ->toThrow(Exception::class);
-    });
-
-    it('can convert API data to attributes', function () {
-        $reflection = new ReflectionClass($this->adapter);
-        $method = $reflection->getMethod('convertToAttributes');
-        $method->setAccessible(true);
-
-        // 测试文件数据转换
-        $fileData = [
-            'id' => 'f123',
-            'name' => 'test.txt',
+    public function test_file_size_returns_file_attributes_with_size(): void
+    {
+        $fileInfo = [
+            'path' => 'test.txt',
             'size' => 1024,
+            'type' => 'file',
+        ];
+
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andReturn($fileInfo);
+
+        $result = $this->adapter->fileSize('test.txt');
+
+        $this->assertInstanceOf(\League\Flysystem\FileAttributes::class, $result);
+        $this->assertEquals('test.txt', $result->path());
+        $this->assertEquals(1024, $result->fileSize());
+    }
+
+    public function test_file_size_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Connection failed'));
+
+        $this->expectException(\League\Flysystem\UnableToRetrieveMetadata::class);
+
+        $this->adapter->fileSize('test.txt');
+    }
+
+    public function test_last_modified_returns_file_attributes_with_timestamp(): void
+    {
+        $timestamp = time();
+        $fileInfo = [
+            'path' => 'test.txt',
+            'last_modified' => $timestamp,
+            'type' => 'file',
+        ];
+
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andReturn($fileInfo);
+
+        $result = $this->adapter->lastModified('test.txt');
+
+        $this->assertInstanceOf(\League\Flysystem\FileAttributes::class, $result);
+        $this->assertEquals('test.txt', $result->path());
+        $this->assertEquals($timestamp, $result->lastModified());
+    }
+
+    public function test_last_modified_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Connection failed'));
+
+        $this->expectException(\League\Flysystem\UnableToRetrieveMetadata::class);
+
+        $this->adapter->lastModified('test.txt');
+    }
+
+    public function test_mime_type_returns_file_attributes_with_mime_type(): void
+    {
+        $fileInfo = [
+            'path' => 'test.txt',
             'mime_type' => 'text/plain',
+            'type' => 'file',
         ];
 
-        $result = $method->invoke($this->adapter, $fileData, '/test.txt');
-        expect($result)->toBeInstanceOf(\League\Flysystem\FileAttributes::class);
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andReturn($fileInfo);
 
-        // 测试目录数据转换
-        $dirData = [
-            'id' => 'd456',
-            'name' => 'testdir',
+        $result = $this->adapter->mimeType('test.txt');
+
+        $this->assertInstanceOf(\League\Flysystem\FileAttributes::class, $result);
+        $this->assertEquals('test.txt', $result->path());
+        $this->assertEquals('text/plain', $result->mimeType());
+    }
+
+    public function test_mime_type_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Connection failed'));
+
+        $this->expectException(\League\Flysystem\UnableToRetrieveMetadata::class);
+
+        $this->adapter->mimeType('test.txt');
+    }
+
+    public function test_visibility_returns_file_attributes_with_visibility(): void
+    {
+        $fileInfo = [
+            'path' => 'test.txt',
+            'permissions' => '644',
+            'type' => 'file',
         ];
 
-        $result = $method->invoke($this->adapter, $dirData, '/testdir');
-        expect($result)->toBeInstanceOf(\League\Flysystem\DirectoryAttributes::class);
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andReturn($fileInfo);
 
-        // 测试无效数据
-        $invalidData = ['invalid' => 'data'];
-        $result = $method->invoke($this->adapter, $invalidData, '/invalid');
-        expect($result)->toBeNull();
-    });
+        $result = $this->adapter->visibility('test.txt');
 
-    it('handles setVisibility correctly', function () {
-        // setVisibility 应该抛出说明性异常
-        expect(fn() => $this->adapter->setVisibility('/test.txt', 'public'))
-            ->toThrow(Exception::class);
-    });
+        $this->assertInstanceOf(\League\Flysystem\FileAttributes::class, $result);
+        $this->assertEquals('test.txt', $result->path());
+        $this->assertEquals('public', $result->visibility());
+    }
 
-    it('can handle metadata operations', function () {
-        // 由于需要实际的API调用，这里只测试方法存在性和基本逻辑
-        expect(method_exists($this->adapter, 'getFileMetadata'))->toBeTrue();
+    public function test_visibility_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('getFileInfo')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Connection failed'));
 
-        // 测试不存在文件的元数据获取
-        expect(fn() => $this->adapter->mimeType('/nonexistent.txt'))
-            ->toThrow(Exception::class);
+        $this->expectException(\League\Flysystem\UnableToRetrieveMetadata::class);
 
-        expect(fn() => $this->adapter->fileSize('/nonexistent.txt'))
-            ->toThrow(Exception::class);
+        $this->adapter->visibility('test.txt');
+    }
 
-        expect(fn() => $this->adapter->lastModified('/nonexistent.txt'))
-            ->toThrow(Exception::class);
+    public function test_set_visibility_succeeds_when_file_exists(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
 
-        expect(fn() => $this->adapter->visibility('/nonexistent.txt'))
-            ->toThrow(Exception::class);
-    });
-});
+        // setVisibility doesn't return anything, just ensure no exception is thrown
+        $this->adapter->setVisibility('test.txt', 'public');
+
+        // If we get here without exception, the test passes
+        $this->assertTrue(true);
+    }
+
+    public function test_set_visibility_throws_exception_when_file_does_not_exist(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(false);
+
+        $this->expectException(\League\Flysystem\UnableToSetVisibility::class);
+
+        $this->adapter->setVisibility('test.txt', 'public');
+    }
+
+    public function test_set_visibility_throws_exception_when_client_fails(): void
+    {
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andThrow(new CtFileOperationException('Connection failed'));
+
+        $this->expectException(\League\Flysystem\UnableToSetVisibility::class);
+
+        $this->adapter->setVisibility('test.txt', 'public');
+    }
+
+    public function test_list_contents_throws_bad_method_call_exception(): void
+    {
+        $this->expectException(\BadMethodCallException::class);
+        iterator_to_array($this->adapter->listContents('/', false));
+    }
+
+    public function test_move_throws_bad_method_call_exception(): void
+    {
+        $config = new Config();
+
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->move('source.txt', 'destination.txt', $config);
+    }
+
+    public function test_copy_throws_bad_method_call_exception(): void
+    {
+        $config = new Config();
+
+        $this->expectException(\BadMethodCallException::class);
+        $this->adapter->copy('source.txt', 'destination.txt', $config);
+    }
+}

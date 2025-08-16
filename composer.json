@@ -1,46 +1,85 @@
 {
-    "name": "yangweijie/filesystem-ctlife",
-    "description": "CTFile adapter for League Flysystem",
+    "name": "yangweijie/filesystem-ctfile",
+    "description": "A PHP filesystem extension package that integrates ctFile functionality with the Flysystem filesystem abstraction library",
     "type": "library",
+    "keywords": ["filesystem", "flysystem", "ctfile", "adapter", "storage", "file-management", "psr"],
+    "homepage": "https://github.com/yangweijie/filesystem-ctfile",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "Yang Weijie",
+            "email": "yangweijie@example.com",
+            "homepage": "https://github.com/yangweijie",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/yangweijie/filesystem-ctfile/issues",
+        "source": "https://github.com/yangweijie/filesystem-ctfile",
+        "docs": "https://github.com/yangweijie/filesystem-ctfile/blob/main/README.md"
+    },
+    "funding": [
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/yangweijie"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "league/flysystem": "^3.0",
+        "psr/log": "^3.0",
+        "psr/simple-cache": "^3.0"
+    },
+    "require-dev": {
+        "pestphp/pest": "^2.0",
+        "mockery/mockery": "^1.5",
+        "phpstan/phpstan": "^1.10",
+        "friendsofphp/php-cs-fixer": "^3.0"
+    },
     "autoload": {
         "psr-4": {
-            "Yangweijie\\FilesystemCtlife\\": "src/"
+            "YangWeijie\\FilesystemCtfile\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Yangweijie\\FilesystemCtlife\\Tests\\": "tests/"
-        }
-    },
-    "authors": [
-        {
-            "name": "yangweijie",
-            "email": "917647288@qq.com"
-        }
-    ],
-    "require": {
-        "php": "^8.0",
-        "league/flysystem": "^2.5.0|^3.0.0",
-        "ext-curl": "*",
-        "ext-json": "*"
-    },
-    "require-dev": {
-        "pestphp/pest": "^2.0",
-        "phpunit/phpunit": "^9.0|^10.0"
-    },
-    "config": {
-        "allow-plugins": {
-            "pestphp/pest-plugin": true
+            "YangWeijie\\FilesystemCtfile\\Tests\\": "tests/"
         }
     },
     "scripts": {
         "test": "pest",
-        "test-coverage": "pest --coverage",
-        "test-integration": "pest tests/Integration/",
-        "test-performance": "pest tests/Performance/",
-        "test-all": "pest --testsuite=Unit,Integration,Performance",
+        "test-coverage": "pest --coverage --coverage-html=coverage --coverage-xml=coverage.xml",
+        "analyse": "phpstan analyse --memory-limit=1G",
         "cs-fix": "php-cs-fixer fix",
-        "analyse": "phpstan analyse"
-    }
+        "cs-check": "php-cs-fixer fix --dry-run --diff",
+        "quality": [
+            "@cs-check",
+            "@analyse",
+            "@test"
+        ],
+        "quality-fix": [
+            "@cs-fix",
+            "@analyse",
+            "@test"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "phpstan/extension-installer": true
+        },
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "platform": {
+            "php": "8.1.0"
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "1.0-dev"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }

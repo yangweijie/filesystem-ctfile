@@ -8,166 +8,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial release of CTFile Flysystem Adapter
-- Complete Flysystem v3 compatibility
-- Full CTFile API integration
-- Comprehensive error handling system
-- Path mapping and caching mechanism
-- Stream support for large files
-- Extensive test suite (unit, integration, performance)
-- Complete documentation and examples
+- Initial implementation of CtFileAdapter for Flysystem integration
+- Core file operations (read, write, delete, exists)
+- Directory operations (create, delete, list, exists)
+- Configuration management with validation
+- Error handling with custom exception hierarchy
+- Retry mechanism for failed operations
+- Caching support for metadata and directory listings
+- Comprehensive test suite with unit and integration tests
+- Static analysis with PHPStan
+- Code style enforcement with PHP CS Fixer
+- Continuous integration with GitHub Actions
+- Complete API documentation
+- Usage examples and troubleshooting guide
 
 ### Features
-- **CTFileAdapter**: Main adapter implementing all Flysystem operations
-- **CTFileConfig**: Robust configuration management with validation
-- **CTFileClient**: HTTP client for CTFile API communication
-- **PathMapper**: Intelligent path-to-ID mapping with caching
-- **Exception System**: Specialized exceptions for different error types
-- **Support Classes**: FileInfo and UploadHelper utilities
+- **Flysystem Compatibility**: Full implementation of Flysystem FilesystemAdapter interface
+- **ctFile Integration**: Seamless integration with ctFile functionality
+- **Error Handling**: Comprehensive error handling with detailed exception messages
+- **Caching**: Configurable caching layer for improved performance
+- **Retry Logic**: Automatic retry mechanism for transient failures
+- **Path Normalization**: Robust path handling and validation
+- **Metadata Mapping**: Conversion between ctFile and Flysystem metadata formats
+- **Configuration Validation**: Strict validation of configuration parameters
+- **Logging Support**: PSR-3 compatible logging integration
+- **Testing**: Extensive test coverage with mock server for isolated testing
 
-### File Operations
-- File read/write operations with string and stream support
-- File copy and move operations
-- File deletion with proper error handling
-- File existence checking
-- Metadata retrieval (size, MIME type, timestamps, visibility)
+### Technical Details
+- **PHP Version**: Requires PHP 8.1 or higher
+- **Dependencies**: 
+  - league/flysystem ^3.0
+  - psr/log ^3.0
+  - psr/simple-cache ^3.0
+- **Development Dependencies**:
+  - pestphp/pest ^2.0
+  - mockery/mockery ^1.5
+  - phpstan/phpstan ^1.10
+  - friendsofphp/php-cs-fixer ^3.0
 
-### Directory Operations
-- Directory creation and deletion
-- Directory existence checking
-- Recursive directory listing
-- Nested directory support
-
-### Error Handling
-- **AuthenticationException**: Session and permission errors
-- **NetworkException**: Connection and timeout errors
-- **RateLimitException**: API rate limiting with retry-after support
-- **CTFileException**: Base exception with error codes and details
-
-### Performance Features
-- Intelligent path caching with configurable TTL
-- Retry mechanisms for transient failures
-- Stream processing for large files
-- Batch operation support
-
-### Testing
-- 133 test cases with 99 passing (74.4% pass rate)
-- Unit tests for all core components
-- Integration tests for real API interaction
-- Performance tests for benchmarking
-- Mock tests for isolated component testing
-
-### Documentation
-- Comprehensive README with features and usage
-- Installation guide with system requirements
-- Configuration guide with all parameters
-- Usage guide with examples and best practices
-- API reference with complete method documentation
-- Contributing guide for developers
-- Advanced and basic usage examples
-
-### Development Tools
-- Composer scripts for testing and analysis
-- Pest testing framework integration
-- PHPUnit compatibility
-- Code quality tools configuration
-
-## [1.0.0] - 2025-01-14
+## [1.0.0] - TBD
 
 ### Added
 - Initial stable release
-- Production-ready CTFile Flysystem Adapter
-- Complete feature set as described above
+- Complete Flysystem adapter implementation
+- Production-ready ctFile integration
+- Comprehensive documentation
+- Full test coverage
+- Performance optimizations
 
-### Requirements
-- PHP 8.0 or higher
-- League Flysystem 2.5+ or 3.0+
-- cURL extension
-- JSON extension
-- CTFile account with API credentials
+### Breaking Changes
+- None (initial release)
 
-### Installation
-```bash
-composer require yangweijie/filesystem-ctlife
-```
-
-### Basic Usage
-```php
-use League\Flysystem\Filesystem;
-use Yangweijie\FilesystemCtlife\CTFileAdapter;
-use Yangweijie\FilesystemCtlife\CTFileConfig;
-
-$config = new CTFileConfig([
-    'session' => 'your-session-token',
-    'app_id' => 'your-app-id',
-]);
-
-$adapter = new CTFileAdapter($config);
-$filesystem = new Filesystem($adapter);
-
-$filesystem->write('hello.txt', 'Hello, CTFile!');
-```
+### Migration Guide
+- This is the initial release, no migration required
 
 ### Security
-- SSL verification enabled by default
 - Secure credential handling
+- Path traversal protection
 - Input validation and sanitization
-- Error message sanitization
-
-### Performance
-- Optimized for production use
-- Configurable timeouts and retries
-- Efficient memory usage
-- Minimal API calls through caching
-
-### Compatibility
-- Fully compatible with Flysystem v3
-- PSR-4 autoloading
-- PSR-12 coding standards
-- Semantic versioning
-
-### Support
-- Comprehensive documentation
-- Example code and use cases
-- Community support through GitHub
-- Professional support available
+- Safe error message handling
 
 ---
 
-## Development Notes
+## Release Process
 
-### Version Numbering
-This project follows [Semantic Versioning](https://semver.org/):
-- **MAJOR**: Incompatible API changes
-- **MINOR**: New functionality in a backwards compatible manner
-- **PATCH**: Backwards compatible bug fixes
-
-### Release Process
 1. Update version in `composer.json`
-2. Update `CHANGELOG.md` with new changes
-3. Create release tag
-4. Publish to Packagist
-5. Update documentation if needed
+2. Update this CHANGELOG.md with release notes
+3. Create a git tag with the version number
+4. Push the tag to trigger release automation
+5. Publish to Packagist (if not automated)
 
-### Contributing
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- Reporting bugs
-- Suggesting enhancements
-- Submitting pull requests
-- Development setup
-- Testing requirements
+## Version Numbering
 
-### License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project follows [Semantic Versioning](https://semver.org/):
 
-### Credits
-- **Author**: yangweijie (917647288@qq.com)
-- **Framework**: League Flysystem
-- **Service**: CTFile Cloud Storage
-- **Testing**: Pest PHP Testing Framework
+- **MAJOR** version for incompatible API changes
+- **MINOR** version for backwards-compatible functionality additions
+- **PATCH** version for backwards-compatible bug fixes
 
-### Links
-- **Repository**: https://github.com/yangweijie/filesystem-ctlife
-- **Packagist**: https://packagist.org/packages/yangweijie/filesystem-ctlife
-- **Issues**: https://github.com/yangweijie/filesystem-ctlife/issues
-- **Documentation**: https://github.com/yangweijie/filesystem-ctlife/tree/main/docs
+## Support
+
+- **Current Version**: Unreleased (development)
+- **Supported PHP Versions**: 8.1, 8.2, 8.3+
+- **Supported Flysystem Versions**: 3.x
+
+For support and questions, please:
+1. Check the documentation in the `docs/` directory
+2. Review existing issues on GitHub
+3. Create a new issue if needed

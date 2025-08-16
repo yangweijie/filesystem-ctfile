@@ -2,78 +2,169 @@
 
 declare(strict_types=1);
 
-namespace Yangweijie\FilesystemCtlife\Exceptions;
+namespace YangWeijie\FilesystemCtfile\Exceptions;
 
-use Exception;
+use League\Flysystem\FilesystemException;
 
 /**
- * CTFile 基础异常类
- * 
- * 所有 CTFile 相关异常的基类
+ * Base exception class for all ctFile-related errors.
+ *
+ * Implements Flysystem's FilesystemException to maintain compatibility
+ * with the Flysystem ecosystem while providing ctFile-specific context.
  */
-class CTFileException extends Exception
+class CtFileException extends \RuntimeException implements FilesystemException
 {
     /**
-     * 错误代码
+     * The operation that was being performed when the exception occurred.
      */
-    protected int $errorCode;
+    private string $operation;
 
     /**
-     * 错误详细信息
+     * The file or directory path involved in the operation.
      */
-    protected array $errorDetails;
+    private string $path;
 
     /**
-     * 构造函数
+     * Additional context information about the error.
+     */
+    private array $context;
+
+    /**
+     * Create a new CtFileException.
      *
-     * @param string $message 错误消息
-     * @param int $code 异常代码
-     * @param int $errorCode CTFile 错误代码
-     * @param array $errorDetails 错误详细信息
-     * @param Exception|null $previous 前一个异常
+     * @param string $message The exception message
+     * @param string $operation The operation being performed
+     * @param string $path The file or directory path
+     * @param array $context Additional context information
+     * @param int $code The exception code
+     * @param \Throwable|null $previous The previous exception
      */
     public function __construct(
-        string $message = '',
+        string $message,
+        string $operation = '',
+        string $path = '',
+        array $context = [],
         int $code = 0,
-        int $errorCode = 0,
-        array $errorDetails = [],
-        ?Exception $previous = null
+        ?\Throwable $previous = null
     ) {
-        parent::__construct($message, $code, $previous);
-        $this->errorCode = $errorCode;
-        $this->errorDetails = $errorDetails;
+        $this->operation = $operation;
+        $this->path = $path;
+        $this->context = $context;
+
+        // Enhance the message with operation and path context
+        $enhancedMessage = $this->buildEnhancedMessage($message, $operation, $path);
+
+        parent::__construct($enhancedMessage, $code, $previous);
     }
 
     /**
-     * 获取 CTFile 错误代码
+     * Get the operation that was being performed.
      *
-     * @return int
+     * @return string The operation name
      */
-    public function getErrorCode(): int
+    public function getOperation(): string
     {
-        return $this->errorCode;
+        return $this->operation;
     }
 
     /**
-     * 获取错误详细信息
+     * Get the file or directory path involved.
      *
-     * @return array
+     * @return string The path
      */
-    public function getErrorDetails(): array
+    public function getPath(): string
     {
-        return $this->errorDetails;
+        return $this->path;
     }
 
     /**
-     * 创建一个通用的 CTFile 异常
+     * Get additional context information.
      *
-     * @param string $message 错误消息
-     * @param int $errorCode CTFile 错误代码
-     * @param array $errorDetails 错误详细信息
+     * @return array The context array
+     */
+    public function getContext(): array
+    {
+        return $this->context;
+    }
+
+    /**
+     * Set additional context information.
+     *
+     * @param array $context The context array
+     * @return self
+     */
+    public function setContext(array $context): self
+    {
+        $this->context = $context;
+
+        return $this;
+    }
+
+    /**
+     * Add a single context item.
+     *
+     * @param string $key The context key
+     * @param mixed $value The context value
+     * @return self
+     */
+    public function addContext(string $key, $value): self
+    {
+        $this->context[$key] = $value;
+
+        return $this;
+    }
+
+    /**
+     * Build an enhanced error message with operation and path context.
+     *
+     * @param string $message The original message
+     * @param string $operation The operation being performed
+     * @param string $path The file or directory path
+     * @return string The enhanced message
+     */
+    private function buildEnhancedMessage(string $message, string $operation, string $path): string
+    {
+        $parts = [$message];
+
+        if (!empty($operation)) {
+            $parts[] = "Operation: {$operation}";
+        }
+
+        if (!empty($path)) {
+            $parts[] = "Path: {$path}";
+        }
+
+        return implode(' | ', $parts);
+    }
+
+    /**
+     * Create a new exception with operation context.
+     *
+     * @param string $message The exception message
+     * @param string $operation The operation being performed
+     * @param string $path The file or directory path
+     * @param \Throwable|null $previous The previous exception
      * @return static
      */
-    public static function create(string $message, int $errorCode = 0, array $errorDetails = []): static
+    public static function forOperation(
+        string $message,
+        string $operation,
+        string $path = '',
+        ?\Throwable $previous = null
+    ): static {
+        return new static($message, $operation, $path, [], 0, $previous);
+    }
+
+    /**
+     * Create a new exception with path context.
+     *
+     * @param string $message The exception message
+     * @param string $path The file or directory path
+     * @param \Throwable|null $previous The previous exception
+     * @return static
+     */
+    public static function forPath(string $message, string $path, ?\Throwable $previous = null): static
     {
-        return new static($message, 0, $errorCode, $errorDetails);
+        return new static($message, '', $path, [], 0, $previous);
     }
 }

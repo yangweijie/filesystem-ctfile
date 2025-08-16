@@ -1,148 +1,364 @@
-# CTFile Adapter for League Flysystem
+# Filesystem ctFile Extension
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/yangweijie/filesystem-ctlife.svg?style=flat-square)](https://packagist.org/packages/yangweijie/filesystem-ctlife)
-[![Total Downloads](https://img.shields.io/packagist/dt/yangweijie/filesystem-ctlife.svg?style=flat-square)](https://packagist.org/packages/yangweijie/filesystem-ctlife)
-[![License](https://img.shields.io/packagist/l/yangweijie/filesystem-ctlife.svg?style=flat-square)](https://packagist.org/packages/yangweijie/filesystem-ctlife)
-
-A complete filesystem abstraction for CTFile cloud storage, built on top of League Flysystem.
+A PHP filesystem extension package that integrates ctFile functionality with the Flysystem filesystem abstraction library.
 
 ## Features
 
-- **Complete Flysystem Integration**: Implements all standard filesystem operations
-- **CTFile API Support**: Full integration with CTFile's REST API
-- **Two-Step Upload Process**: Handles CTFile's unique upload workflow
-- **Dynamic Download Links**: Manages temporary download URLs
-- **Path Mapping**: Seamless conversion between Flysystem paths and CTFile IDs
-- **Error Handling**: Comprehensive exception mapping and retry mechanisms
-- **Public & Private Cloud**: Supports both CTFile storage modes
-- **Stream Support**: Full support for PHP streams and large file handling
-- **Caching**: Intelligent path mapping cache for improved performance
-- **Rate Limiting**: Built-in rate limit handling with retry mechanisms
-- **Extensive Testing**: Comprehensive test suite with unit, integration, and performance tests
-
-## Installation
-
-You can install the package via composer:
-
-```bash
-composer require yangweijie/filesystem-ctlife
-```
+- Full Flysystem adapter implementation for ctFile
+- Enhanced file management capabilities through ctFile integration
+- Comprehensive error handling and logging
+- PSR-3 logging support
+- Configurable caching and retry mechanisms
+- Extensive test coverage with Pest
 
 ## Requirements
 
-- PHP 8.0 or higher
-- League Flysystem 2.5+ or 3.0+
-- cURL extension
-- JSON extension
+- PHP 8.1 or higher
+- Composer
+- ctFile library/API access
+
+## Installation
+
+### Via Composer
+
+Install the package via Composer:
+
+```bash
+composer require yangweijie/filesystem-ctfile
+```
+
+### Requirements Check
+
+Ensure your system meets the requirements:
+
+```bash
+# Check PHP version
+php --version
+
+# Verify required extensions are installed
+php -m | grep -E "(json|mbstring|openssl)"
+```
+
+### Verify Installation
+
+```php
+<?php
+require_once 'vendor/autoload.php';
+
+use YangWeijie\FilesystemCtfile\CtFileAdapter;
+
+// Verify the adapter class is available
+if (class_exists(CtFileAdapter::class)) {
+    echo "Installation successful!" . PHP_EOL;
+} else {
+    echo "Installation failed!" . PHP_EOL;
+}
+```
 
 ## Basic Usage
 
-```php
-use League\Flysystem\Filesystem;
-use Yangweijie\FilesystemCtlife\CTFileAdapter;
-use Yangweijie\FilesystemCtlife\CTFileConfig;
+### Quick Start
 
-// Configure the adapter
-$config = new CTFileConfig([
-    'session' => 'your_session_token',
-    'app_id' => 'your_app_identifier',
-    'storage_type' => 'public', // or 'private'
-]);
+```php
+<?php
+
+use League\Flysystem\Filesystem;
+use YangWeijie\FilesystemCtfile\CtFileAdapter;
+
+// Configure the ctFile adapter
+$config = [
+    'ctfile' => [
+        'host' => 'your-ctfile-host.com',
+        'port' => 21,
+        'username' => 'your-username',
+        'password' => 'your-password',
+        'ssl' => false,
+        'passive' => true,
+    ],
+];
 
 // Create the adapter and filesystem
-$adapter = new CTFileAdapter($config);
+$adapter = new CtFileAdapter($config);
 $filesystem = new Filesystem($adapter);
 
 // Use standard Flysystem operations
-$filesystem->write('path/to/file.txt', 'Hello World!');
+$filesystem->write('path/to/file.txt', 'Hello, World!');
 $content = $filesystem->read('path/to/file.txt');
-$filesystem->createDirectory('new-folder');
-$listing = $filesystem->listContents('/', true);
+$exists = $filesystem->fileExists('path/to/file.txt');
+$filesystem->delete('path/to/file.txt');
 ```
 
-## Configuration Options
+### Configuration Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `session` | string | required | CTFile session token |
-| `app_id` | string | required | Application identifier |
-| `api_base_url` | string | `https://rest.ctfile.com/v1` | CTFile API base URL |
-| `upload_base_url` | string | `https://upload.ctfile.com` | Upload service URL |
-| `storage_type` | string | `public` | Storage type: `public` or `private` |
-| `cache_ttl` | int | `3600` | Path mapping cache TTL in seconds |
-| `retry_attempts` | int | `3` | Number of retry attempts for failed requests |
-| `timeout` | int | `30` | Request timeout in seconds |
-| `connect_timeout` | int | `10` | Connection timeout in seconds |
+```php
+$config = [
+    'ctfile' => [
+        'host' => 'your-ctfile-host.com',      // Required: ctFile server host
+        'port' => 21,                          // Optional: Server port (default: 21)
+        'username' => 'your-username',         // Required: Authentication username
+        'password' => 'your-password',         // Required: Authentication password
+        'timeout' => 30,                       // Optional: Connection timeout (default: 30)
+        'ssl' => false,                        // Optional: Use SSL connection (default: false)
+        'passive' => true,                     // Optional: Use passive mode (default: true)
+    ],
+    'adapter' => [
+        'root_path' => '/',                    // Optional: Root path prefix (default: /)
+        'path_separator' => '/',               // Optional: Path separator (default: /)
+        'case_sensitive' => true,              // Optional: Case sensitive paths (default: true)
+        'create_directories' => true,          // Optional: Auto-create directories (default: true)
+    ],
+    'logging' => [
+        'enabled' => false,                    // Optional: Enable logging (default: false)
+        'level' => 'info',                     // Optional: Log level (default: info)
+        'channel' => 'filesystem-ctfile',      // Optional: Log channel (default: filesystem-ctfile)
+    ],
+    'cache' => [
+        'enabled' => false,                    // Optional: Enable caching (default: false)
+        'ttl' => 300,                          // Optional: Cache TTL in seconds (default: 300)
+        'driver' => 'memory',                  // Optional: Cache driver (default: memory)
+    ],
+];
+```
+
+### Directory Operations
+
+```php
+// Create directories
+$filesystem->createDirectory('new/directory');
+
+// List directory contents
+$listing = $filesystem->listContents('path/to/directory');
+foreach ($listing as $item) {
+    echo $item->path() . ' - ' . $item->type() . PHP_EOL;
+}
+
+// Check if directory exists
+if ($filesystem->directoryExists('path/to/directory')) {
+    // Directory exists
+}
+
+// Delete directory
+$filesystem->deleteDirectory('path/to/directory');
+```
+
+### File Operations
+
+```php
+// Write files
+$filesystem->write('file.txt', 'content');
+$filesystem->writeStream('large-file.txt', $stream);
+
+// Read files
+$content = $filesystem->read('file.txt');
+$stream = $filesystem->readStream('large-file.txt');
+
+// File metadata
+$size = $filesystem->fileSize('file.txt');
+$mimeType = $filesystem->mimeType('file.txt');
+$lastModified = $filesystem->lastModified('file.txt');
+
+// Copy and move files
+$filesystem->copy('source.txt', 'destination.txt');
+$filesystem->move('old-name.txt', 'new-name.txt');
+```
+
+## Advanced Usage
+
+### Error Handling
+
+```php
+use League\Flysystem\UnableToWriteFile;
+use YangWeijie\FilesystemCtfile\Exceptions\CtFileException;
+
+try {
+    $filesystem->write('protected/file.txt', 'content');
+} catch (UnableToWriteFile $e) {
+    // Handle Flysystem exceptions
+    echo "Failed to write file: " . $e->getMessage();
+} catch (CtFileException $e) {
+    // Handle ctFile-specific exceptions
+    echo "ctFile error: " . $e->getMessage();
+}
+```
+
+### Custom Configuration
+
+```php
+use YangWeijie\FilesystemCtfile\CtFileClient;
+use YangWeijie\FilesystemCtfile\CtFileAdapter;
+use YangWeijie\FilesystemCtfile\ConfigurationManager;
+
+// Advanced configuration with custom client
+$config = new ConfigurationManager([
+    'ctfile' => [
+        'host' => 'ctfile.example.com',
+        'username' => 'user',
+        'password' => 'pass',
+        'timeout' => 60,
+    ],
+    'adapter' => [
+        'root_path' => '/app/files',
+        'create_directories' => true,
+    ],
+]);
+
+$client = new CtFileClient($config->get('ctfile'));
+$adapter = new CtFileAdapter($client, $config->get('adapter'));
+```
+
+### Logging Integration
+
+```php
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
+
+// Create a logger
+$logger = new Logger('ctfile');
+$logger->pushHandler(new StreamHandler('ctfile.log', Logger::INFO));
+
+// Configure adapter with logging
+$config['logging'] = [
+    'enabled' => true,
+    'level' => 'info',
+];
+
+$adapter = new CtFileAdapter($config);
+$adapter->setLogger($logger);
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Timeout**
+   ```php
+   // Increase timeout in configuration
+   $config['ctfile']['timeout'] = 120;
+   ```
+
+2. **Permission Denied**
+   ```php
+   // Check credentials and permissions
+   $config['ctfile']['username'] = 'correct-username';
+   $config['ctfile']['password'] = 'correct-password';
+   ```
+
+3. **Path Not Found**
+   ```php
+   // Ensure directories exist or enable auto-creation
+   $config['adapter']['create_directories'] = true;
+   ```
+
+### Debug Mode
+
+```php
+// Enable debug logging
+$config['logging'] = [
+    'enabled' => true,
+    'level' => 'debug',
+];
+```
+
+For more troubleshooting information, see [docs/troubleshooting-guide.md](docs/troubleshooting-guide.md).
 
 ## Documentation
 
-- [Installation Guide](docs/installation.md)
-- [Configuration](docs/configuration.md)
-- [Usage Examples](docs/usage.md)
-- [API Reference](docs/api.md)
+- [API Documentation](docs/api-documentation.md)
+- [Usage Examples](docs/usage-examples.md)
+- [Troubleshooting Guide](docs/troubleshooting-guide.md)
 
-## Testing
+## Development
+
+### Setting Up Development Environment
 
 ```bash
-# Run unit tests
+# Clone the repository
+git clone https://github.com/yangweijie/filesystem-ctfile.git
+cd filesystem-ctfile
+
+# Install dependencies
+composer install
+
+# Run tests to verify setup
+composer test
+```
+
+### Running Tests
+
+```bash
+# Run all tests
 composer test
 
 # Run tests with coverage
 composer test-coverage
 
-# Run integration tests (requires CTFile credentials)
-CTFILE_SESSION=your-session CTFILE_APP_ID=your-app-id composer test-integration
+# Run specific test suite
+./vendor/bin/pest tests/Unit
+./vendor/bin/pest tests/Integration
 
-# Run performance tests
-composer test-performance
-
-# Run all tests
-composer test-all
+# Run specific test file
+./vendor/bin/pest tests/Unit/CtFileAdapterTest.php
 ```
 
-### Setting up Integration Tests
-
-To run integration tests, you need to provide CTFile credentials:
+### Code Quality
 
 ```bash
-export CTFILE_SESSION="your-session-token"
-export CTFILE_APP_ID="your-app-id"
-export CTFILE_API_URL="https://webapi.ctfile.com"  # Optional
+# Run static analysis
+composer analyse
+
+# Check code style
+composer cs-check
+
+# Fix code style
+composer cs-fix
+
+# Run all quality checks
+composer quality
 ```
 
-## Error Handling
+### Building Documentation
 
-The adapter provides comprehensive error handling with specific exception types:
-
-```php
-use Yangweijie\FilesystemCtlife\Exceptions\AuthenticationException;
-use Yangweijie\FilesystemCtlife\Exceptions\NetworkException;
-use Yangweijie\FilesystemCtlife\Exceptions\RateLimitException;
-
-try {
-    $filesystem->write('test.txt', 'content');
-} catch (AuthenticationException $e) {
-    echo "Authentication failed: " . $e->getMessage();
-} catch (NetworkException $e) {
-    echo "Network error: " . $e->getMessage();
-} catch (RateLimitException $e) {
-    echo "Rate limited. Retry after: " . $e->getRetryAfter() . " seconds";
-}
+```bash
+# Generate API documentation (if phpDocumentor is installed)
+phpdoc -d src -t docs/api
 ```
 
 ## Contributing
 
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
+We welcome contributions! Please follow these steps:
 
-## Security
+### Development Workflow
 
-If you discover any security related issues, please email 917647288@qq.com instead of using the issue tracker.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add tests for new functionality
+5. Run the test suite (`composer test`)
+6. Run code quality checks (`composer quality`)
+7. Commit your changes (`git commit -m 'Add some amazing feature'`)
+8. Push to the branch (`git push origin feature/amazing-feature`)
+9. Open a Pull Request
 
-## Credits
+### Coding Standards
 
-- [yangweijie](https://github.com/yangweijie)
-- [All Contributors](../../contributors)
+- Follow PSR-12 coding standards
+- Add PHPDoc comments for all public methods
+- Write tests for new functionality
+- Ensure all tests pass
+- Maintain backward compatibility
+
+### Pull Request Guidelines
+
+- Provide a clear description of the changes
+- Reference any related issues
+- Include tests for new features
+- Update documentation as needed
+- Ensure CI checks pass
 
 ## License
 
-The MIT License (MIT). Please see [License File](LICENSE) for more information.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+If you encounter any issues or have questions, please [open an issue](https://github.com/yangweijie/filesystem-ctfile/issues) on GitHub.

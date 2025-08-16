@@ -1,5 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
+/*
+ * This file is part of the yangweijie/filesystem-ctfile package.
+ *
+ * (c) Yang Weijie <yangweijie@example.com>
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+use YangWeijie\FilesystemCtfile\Tests\TestCase;
+
 /*
 |--------------------------------------------------------------------------
 | Test Case
@@ -11,7 +24,7 @@
 |
 */
 
-// uses(Tests\TestCase::class)->in('Feature');
+uses(TestCase::class)->in('Unit', 'Integration');
 
 /*
 |--------------------------------------------------------------------------

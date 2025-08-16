@@ -1,0 +1,31 @@
+parameters:
+    level: 6
+    paths:
+        - src
+    excludePaths:
+        - tests/
+    ignoreErrors:
+        # Allow unsafe usage of new static() in exception classes
+        - '#Unsafe usage of new static\(\)#'
+        # Allow mixed types in utility classes
+        - '#Parameter .+ expects .+, mixed given#'
+        # Allow null types in path operations
+        - '#Parameter .+ expects string, string\|null given#'
+        # Allow invalid type to throw in retry handler
+        - '#Invalid type .+ to throw#'
+        # Allow unused methods in adapter (may be used by future features)
+        - '#Method .+ is unused#'
+        # Allow unused variables in closures
+        - '#Anonymous function has an unused use#'
+        # Allow missing return types for mixed return methods
+        - '#Method .+ has no return type specified#'
+        # Allow missing parameter types for mixed parameters
+        - '#Method .+ has parameter .+ with no type specified#'
+        # Allow incorrect case references (namespace case sensitivity)
+        - '#Class .+ referenced with incorrect case#'
+        -
+            identifier: missingType.iterableValue
+        -
+            identifier: missingType.generics
+    reportUnmatchedIgnoredErrors: false
+    tmpDir: var/cache/phpstan

@@ -1,189 +1,161 @@
 <?php
 
+declare(strict_types=1);
+
+/**
+ * Basic Usage Example
+ * 
+ * This example demonstrates basic usage of the yangweijie/filesystem-ctfile package.
+ * 
+ * Before running this example:
+ * 1. Install the package: composer require yangweijie/filesystem-ctfile
+ * 2. Update the configuration below with your actual ctFile server details
+ * 3. Run: php examples/basic-usage.php
+ */
+
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use League\Flysystem\Filesystem;
-use Yangweijie\FilesystemCtlife\CTFileAdapter;
-use Yangweijie\FilesystemCtlife\CTFileConfig;
+use League\Flysystem\UnableToWriteFile;
+use League\Flysystem\UnableToReadFile;
+use YangWeijie\FilesystemCtfile\CtFileAdapter;
+use YangWeijie\FilesystemCtfile\Exceptions\CtFileException;
 
-// Configuration
-$config = new CTFileConfig([
-    'session' => 'your-ctfile-session-token',
-    'app_id' => 'your-ctfile-app-id',
-    'timeout' => 30,
-    'retry_attempts' => 3,
-]);
+// Configuration - Update these values with your actual ctFile server details
+$config = [
+    'ctfile' => [
+        'host' => 'your-ctfile-host.com',      // Replace with your ctFile server host
+        'port' => 21,                          // Replace with your ctFile server port
+        'username' => 'your-username',         // Replace with your username
+        'password' => 'your-password',         // Replace with your password
+        'timeout' => 30,
+        'ssl' => false,
+        'passive' => true,
+    ],
+    'adapter' => [
+        'root_path' => '/example',             // Optional: Set a root path
+        'create_directories' => true,          // Auto-create directories
+    ],
+    'logging' => [
+        'enabled' => true,                     // Enable logging for this example
+        'level' => 'info',
+    ],
+];
 
-// Create adapter and filesystem
-$adapter = new CTFileAdapter($config);
-$filesystem = new Filesystem($adapter);
-
-echo "CTFile Flysystem Adapter - Basic Usage Examples\n";
-echo "===============================================\n\n";
+echo "=== yangweijie/filesystem-ctfile Basic Usage Example ===" . PHP_EOL . PHP_EOL;
 
 try {
-    // 1. File Operations
-    echo "1. File Operations\n";
-    echo "------------------\n";
+    // Create the adapter and filesystem
+    echo "Creating CtFileAdapter..." . PHP_EOL;
+    $adapter = new CtFileAdapter($config);
+    $filesystem = new Filesystem($adapter);
+    echo "✓ Adapter created successfully" . PHP_EOL . PHP_EOL;
+
+    // Example 1: Write a file
+    echo "Example 1: Writing a file..." . PHP_EOL;
+    $filename = 'example.txt';
+    $content = 'Hello, World! This is a test file created at ' . date('Y-m-d H:i:s');
     
-    // Write a file
-    $filename = 'example-' . date('Y-m-d-H-i-s') . '.txt';
-    $content = "Hello, CTFile!\nThis is a test file created at " . date('Y-m-d H:i:s');
-    
-    echo "Writing file: {$filename}\n";
     $filesystem->write($filename, $content);
-    echo "✓ File written successfully\n";
-    
-    // Check if file exists
+    echo "✓ File '{$filename}' written successfully" . PHP_EOL . PHP_EOL;
+
+    // Example 2: Check if file exists
+    echo "Example 2: Checking if file exists..." . PHP_EOL;
     if ($filesystem->fileExists($filename)) {
-        echo "✓ File exists\n";
+        echo "✓ File '{$filename}' exists" . PHP_EOL;
+    } else {
+        echo "✗ File '{$filename}' does not exist" . PHP_EOL;
     }
-    
-    // Read the file
+    echo PHP_EOL;
+
+    // Example 3: Read the file
+    echo "Example 3: Reading the file..." . PHP_EOL;
     $readContent = $filesystem->read($filename);
-    echo "✓ File content read: " . strlen($readContent) . " bytes\n";
+    echo "✓ File content: " . $readContent . PHP_EOL . PHP_EOL;
+
+    // Example 4: Get file metadata
+    echo "Example 4: Getting file metadata..." . PHP_EOL;
+    $fileSize = $filesystem->fileSize($filename);
+    echo "✓ File size: {$fileSize} bytes" . PHP_EOL;
     
-    // Get file metadata
-    $size = $filesystem->fileSize($filename);
-    $mimeType = $filesystem->mimeType($filename);
-    $lastModified = $filesystem->lastModified($filename);
+    try {
+        $mimeType = $filesystem->mimeType($filename);
+        echo "✓ MIME type: {$mimeType}" . PHP_EOL;
+    } catch (Exception $e) {
+        echo "ℹ MIME type detection not available: " . $e->getMessage() . PHP_EOL;
+    }
     
-    echo "✓ File size: {$size} bytes\n";
-    echo "✓ MIME type: {$mimeType}\n";
-    echo "✓ Last modified: " . date('Y-m-d H:i:s', $lastModified) . "\n";
-    
-    echo "\n";
-    
-    // 2. Directory Operations
-    echo "2. Directory Operations\n";
-    echo "-----------------------\n";
-    
-    $dirName = 'example-dir-' . date('Y-m-d-H-i-s');
-    
-    // Create directory
-    echo "Creating directory: {$dirName}\n";
+    try {
+        $lastModified = $filesystem->lastModified($filename);
+        echo "✓ Last modified: " . date('Y-m-d H:i:s', $lastModified) . PHP_EOL;
+    } catch (Exception $e) {
+        echo "ℹ Last modified time not available: " . $e->getMessage() . PHP_EOL;
+    }
+    echo PHP_EOL;
+
+    // Example 5: Create a directory
+    echo "Example 5: Creating a directory..." . PHP_EOL;
+    $dirName = 'test-directory';
     $filesystem->createDirectory($dirName);
-    echo "✓ Directory created\n";
-    
-    // Check if directory exists
-    if ($filesystem->directoryExists($dirName)) {
-        echo "✓ Directory exists\n";
+    echo "✓ Directory '{$dirName}' created successfully" . PHP_EOL . PHP_EOL;
+
+    // Example 6: Write a file in the directory
+    echo "Example 6: Writing a file in the directory..." . PHP_EOL;
+    $dirFile = $dirName . '/nested-file.txt';
+    $filesystem->write($dirFile, 'This is a file in a subdirectory');
+    echo "✓ File '{$dirFile}' written successfully" . PHP_EOL . PHP_EOL;
+
+    // Example 7: List directory contents
+    echo "Example 7: Listing directory contents..." . PHP_EOL;
+    $listing = $filesystem->listContents('/', false); // List root directory, non-recursive
+    echo "Contents of root directory:" . PHP_EOL;
+    foreach ($listing as $item) {
+        $type = $item->isFile() ? 'FILE' : 'DIR';
+        echo "  {$type}: {$item->path()}" . PHP_EOL;
     }
+    echo PHP_EOL;
+
+    // Example 8: Copy a file
+    echo "Example 8: Copying a file..." . PHP_EOL;
+    $copyName = 'example-copy.txt';
+    $filesystem->copy($filename, $copyName);
+    echo "✓ File copied from '{$filename}' to '{$copyName}'" . PHP_EOL . PHP_EOL;
+
+    // Example 9: Move/rename a file
+    echo "Example 9: Moving/renaming a file..." . PHP_EOL;
+    $newName = 'example-renamed.txt';
+    $filesystem->move($copyName, $newName);
+    echo "✓ File moved from '{$copyName}' to '{$newName}'" . PHP_EOL . PHP_EOL;
+
+    // Example 10: Clean up - delete files and directory
+    echo "Example 10: Cleaning up..." . PHP_EOL;
+    $filesystem->delete($filename);
+    echo "✓ Deleted '{$filename}'" . PHP_EOL;
     
-    // Create a file in the directory
-    $subFile = $dirName . '/sub-file.txt';
-    $filesystem->write($subFile, 'Content in subdirectory');
-    echo "✓ File created in directory\n";
+    $filesystem->delete($newName);
+    echo "✓ Deleted '{$newName}'" . PHP_EOL;
     
-    // List directory contents
-    echo "Directory contents:\n";
-    $contents = $filesystem->listContents($dirName, false);
-    foreach ($contents as $item) {
-        $type = $item->isFile() ? 'File' : 'Directory';
-        echo "  - {$type}: " . $item->path() . "\n";
-    }
+    $filesystem->delete($dirFile);
+    echo "✓ Deleted '{$dirFile}'" . PHP_EOL;
     
-    echo "\n";
-    
-    // 3. Stream Operations
-    echo "3. Stream Operations\n";
-    echo "--------------------\n";
-    
-    $streamFile = 'stream-example.txt';
-    $streamContent = "This content is written using streams.\n" . str_repeat("Stream data line.\n", 100);
-    
-    // Create a memory stream
-    $stream = fopen('php://memory', 'r+');
-    fwrite($stream, $streamContent);
-    rewind($stream);
-    
-    echo "Writing stream to file: {$streamFile}\n";
-    $filesystem->writeStream($streamFile, $stream);
-    fclose($stream);
-    echo "✓ Stream written successfully\n";
-    
-    // Read as stream
-    $readStream = $filesystem->readStream($streamFile);
-    $streamSize = 0;
-    while (!feof($readStream)) {
-        $chunk = fread($readStream, 1024);
-        $streamSize += strlen($chunk);
-    }
-    fclose($readStream);
-    
-    echo "✓ Stream read: {$streamSize} bytes\n";
-    
-    echo "\n";
-    
-    // 4. File Copy and Move
-    echo "4. File Copy and Move\n";
-    echo "---------------------\n";
-    
-    $sourceFile = 'source-file.txt';
-    $copyFile = 'copied-file.txt';
-    $moveFile = 'moved-file.txt';
-    
-    // Create source file
-    $filesystem->write($sourceFile, 'Source file content for copy/move operations');
-    echo "✓ Source file created\n";
-    
-    // Copy file
-    $filesystem->copy($sourceFile, $copyFile);
-    echo "✓ File copied\n";
-    
-    // Move file
-    $filesystem->move($copyFile, $moveFile);
-    echo "✓ File moved\n";
-    
-    // Verify operations
-    echo "Files after copy/move:\n";
-    echo "  - Source exists: " . ($filesystem->fileExists($sourceFile) ? 'Yes' : 'No') . "\n";
-    echo "  - Copy exists: " . ($filesystem->fileExists($copyFile) ? 'Yes' : 'No') . "\n";
-    echo "  - Moved exists: " . ($filesystem->fileExists($moveFile) ? 'Yes' : 'No') . "\n";
-    
-    echo "\n";
-    
-    // 5. List Root Directory
-    echo "5. Root Directory Listing\n";
-    echo "-------------------------\n";
-    
-    echo "Root directory contents (first 10 items):\n";
-    $rootContents = $filesystem->listContents('/', false);
-    $count = 0;
-    foreach ($rootContents as $item) {
-        if ($count >= 10) break;
-        $type = $item->isFile() ? 'File' : 'Directory';
-        $size = $item->isFile() ? " ({$item->fileSize()} bytes)" : '';
-        echo "  - {$type}: " . $item->path() . $size . "\n";
-        $count++;
-    }
-    
-    echo "\n";
-    
-    // Cleanup
-    echo "6. Cleanup\n";
-    echo "----------\n";
-    
-    $filesToDelete = [$filename, $subFile, $streamFile, $sourceFile, $moveFile];
-    foreach ($filesToDelete as $file) {
-        if ($filesystem->fileExists($file)) {
-            $filesystem->delete($file);
-            echo "✓ Deleted: {$file}\n";
-        }
-    }
-    
-    if ($filesystem->directoryExists($dirName)) {
-        $filesystem->deleteDirectory($dirName);
-        echo "✓ Deleted directory: {$dirName}\n";
-    }
-    
-    echo "\n✅ All examples completed successfully!\n";
-    
+    $filesystem->deleteDirectory($dirName);
+    echo "✓ Deleted directory '{$dirName}'" . PHP_EOL . PHP_EOL;
+
+    echo "=== All examples completed successfully! ===" . PHP_EOL;
+
+} catch (UnableToWriteFile $e) {
+    echo "✗ Failed to write file: " . $e->getMessage() . PHP_EOL;
+    echo "Check your ctFile server configuration and permissions." . PHP_EOL;
+} catch (UnableToReadFile $e) {
+    echo "✗ Failed to read file: " . $e->getMessage() . PHP_EOL;
+    echo "Check if the file exists and you have read permissions." . PHP_EOL;
+} catch (CtFileException $e) {
+    echo "✗ ctFile error: " . $e->getMessage() . PHP_EOL;
+    echo "Check your ctFile server connection and credentials." . PHP_EOL;
 } catch (Exception $e) {
-    echo "\n❌ Error: " . $e->getMessage() . "\n";
-    echo "File: " . $e->getFile() . ":" . $e->getLine() . "\n";
-    
-    if ($e->getPrevious()) {
-        echo "Previous: " . $e->getPrevious()->getMessage() . "\n";
-    }
+    echo "✗ Unexpected error: " . $e->getMessage() . PHP_EOL;
+    echo "Stack trace:" . PHP_EOL;
+    echo $e->getTraceAsString() . PHP_EOL;
 }
+
+echo PHP_EOL . "For more examples, see the docs/ directory." . PHP_EOL;
