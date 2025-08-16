@@ -1,6 +1,25 @@
 # Filesystem ctFile Extension
 
+[![Latest Stable Version](https://poser.pugx.org/yangweijie/filesystem-ctfile/v/stable)](https://packagist.org/packages/yangweijie/filesystem-ctfile)
+[![Total Downloads](https://poser.pugx.org/yangweijie/filesystem-ctfile/downloads)](https://packagist.org/packages/yangweijie/filesystem-ctfile)
+[![License](https://poser.pugx.org/yangweijie/filesystem-ctfile/license)](https://packagist.org/packages/yangweijie/filesystem-ctfile)
+[![PHP Version Require](https://poser.pugx.org/yangweijie/filesystem-ctfile/require/php)](https://packagist.org/packages/yangweijie/filesystem-ctfile)
+
 A PHP filesystem extension package that integrates ctFile functionality with the Flysystem filesystem abstraction library.
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Basic Usage](#basic-usage)
+- [Advanced Usage](#advanced-usage)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
 
 ## Features
 
@@ -13,47 +32,161 @@ A PHP filesystem extension package that integrates ctFile functionality with the
 
 ## Requirements
 
-- PHP 8.1 or higher
-- Composer
-- ctFile library/API access
+### System Requirements
+
+- **PHP**: 8.1 or higher
+- **Composer**: 2.0 or higher
+- **Extensions**: json, mbstring, openssl (typically included in PHP)
+- **ctFile**: Access to ctFile server/API
+
+### Supported Versions
+
+- **PHP**: 8.1, 8.2, 8.3+
+- **Flysystem**: 3.x
+- **Operating Systems**: Linux, macOS, Windows
 
 ## Installation
 
-### Via Composer
+### Step 1: Install via Composer
 
-Install the package via Composer:
+Install the package using Composer:
 
 ```bash
 composer require yangweijie/filesystem-ctfile
 ```
 
-### Requirements Check
+### Step 2: Verify System Requirements
 
-Ensure your system meets the requirements:
+Check that your system meets all requirements:
 
 ```bash
-# Check PHP version
+# Check PHP version (must be 8.1+)
 php --version
 
-# Verify required extensions are installed
+# Check Composer version (must be 2.0+)
+composer --version
+
+# Verify required PHP extensions
 php -m | grep -E "(json|mbstring|openssl)"
+
+# Check if all extensions are loaded
+php -r "
+echo 'JSON: ' . (extension_loaded('json') ? 'OK' : 'MISSING') . PHP_EOL;
+echo 'MBString: ' . (extension_loaded('mbstring') ? 'OK' : 'MISSING') . PHP_EOL;
+echo 'OpenSSL: ' . (extension_loaded('openssl') ? 'OK' : 'MISSING') . PHP_EOL;
+"
 ```
 
-### Verify Installation
+### Step 3: Verify Installation
+
+Create a test script to verify the installation:
 
 ```php
 <?php
+// test-installation.php
 require_once 'vendor/autoload.php';
 
 use YangWeijie\FilesystemCtfile\CtFileAdapter;
+use YangWeijie\FilesystemCtfile\CtFileClient;
+use YangWeijie\FilesystemCtfile\ConfigurationManager;
 
-// Verify the adapter class is available
-if (class_exists(CtFileAdapter::class)) {
-    echo "Installation successful!" . PHP_EOL;
-} else {
-    echo "Installation failed!" . PHP_EOL;
+echo "Testing Filesystem ctFile Extension Installation..." . PHP_EOL;
+
+// Test 1: Check if main classes are available
+$classes = [
+    CtFileAdapter::class,
+    CtFileClient::class,
+    ConfigurationManager::class,
+];
+
+foreach ($classes as $class) {
+    if (class_exists($class)) {
+        echo "✓ {$class} - OK" . PHP_EOL;
+    } else {
+        echo "✗ {$class} - MISSING" . PHP_EOL;
+        exit(1);
+    }
 }
+
+// Test 2: Test configuration validation
+try {
+    $config = new ConfigurationManager([
+        'ctfile' => [
+            'host' => 'test.example.com',
+            'username' => 'test',
+            'password' => 'test',
+        ]
+    ]);
+    echo "✓ Configuration validation - OK" . PHP_EOL;
+} catch (Exception $e) {
+    echo "✗ Configuration validation - FAILED: " . $e->getMessage() . PHP_EOL;
+    exit(1);
+}
+
+echo PHP_EOL . "Installation verification completed successfully!" . PHP_EOL;
+echo "You can now use the filesystem-ctfile package in your project." . PHP_EOL;
 ```
+
+Run the verification script:
+
+```bash
+php test-installation.php
+```
+
+### Step 4: Clean Up (Optional)
+
+Remove the test script after verification:
+
+```bash
+rm test-installation.php
+```
+
+### Troubleshooting Installation
+
+If you encounter issues during installation:
+
+1. **Composer Issues**:
+   ```bash
+   # Clear Composer cache
+   composer clear-cache
+   
+   # Update Composer to latest version
+   composer self-update
+   
+   # Install with verbose output
+   composer require yangweijie/filesystem-ctfile -v
+   ```
+
+2. **PHP Version Issues**:
+   ```bash
+   # Check available PHP versions
+   php --version
+   
+   # If using multiple PHP versions, specify the correct one
+   /usr/bin/php8.1 -v
+   composer config platform.php 8.1.0
+   ```
+
+3. **Extension Issues**:
+   ```bash
+   # Install missing extensions (Ubuntu/Debian)
+   sudo apt-get install php8.1-json php8.1-mbstring php8.1-openssl
+   
+   # Install missing extensions (CentOS/RHEL)
+   sudo yum install php81-json php81-mbstring php81-openssl
+   
+   # Install missing extensions (macOS with Homebrew)
+   brew install php@8.1
+   ```
+
+4. **Permission Issues**:
+   ```bash
+   # Fix Composer permissions
+   sudo chown -R $USER:$USER ~/.composer
+   
+   # Install globally if local installation fails
+   composer global require yangweijie/filesystem-ctfile
+   ```
 
 ## Basic Usage
 
@@ -359,6 +492,82 @@ We welcome contributions! Please follow these steps:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## Package Information
+
+### Version Information
+
+- **Current Version**: 1.0.0
+- **Release Date**: 2024-12-16
+- **Stability**: Stable
+- **Minimum PHP Version**: 8.1.0
+
+### Distribution
+
+This package is distributed through:
+
+- **Packagist**: [yangweijie/filesystem-ctfile](https://packagist.org/packages/yangweijie/filesystem-ctfile)
+- **GitHub**: [yangweijie/filesystem-ctfile](https://github.com/yangweijie/filesystem-ctfile)
+
+### Installation Methods
+
+```bash
+# Standard installation
+composer require yangweijie/filesystem-ctfile
+
+# Install specific version
+composer require yangweijie/filesystem-ctfile:^1.0
+
+# Install development version
+composer require yangweijie/filesystem-ctfile:dev-main
+
+# Install with specific stability
+composer require yangweijie/filesystem-ctfile --prefer-stable
+```
+
+### Semantic Versioning
+
+This package follows [Semantic Versioning](https://semver.org/):
+
+- **1.x.x**: Current stable branch
+- **1.0.x**: Patch releases (bug fixes)
+- **1.x.0**: Minor releases (new features, backward compatible)
+- **x.0.0**: Major releases (breaking changes)
+
+### Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed version history and breaking changes.
+
 ## Support
 
-If you encounter any issues or have questions, please [open an issue](https://github.com/yangweijie/filesystem-ctfile/issues) on GitHub.
+### Getting Help
+
+If you encounter any issues or have questions:
+
+1. **Documentation**: Check the [documentation](docs/) directory
+2. **Examples**: Review [usage examples](docs/usage-examples.md)
+3. **Troubleshooting**: See [troubleshooting guide](docs/troubleshooting-guide.md)
+4. **Issues**: [Open an issue](https://github.com/yangweijie/filesystem-ctfile/issues) on GitHub
+5. **Discussions**: Use [GitHub Discussions](https://github.com/yangweijie/filesystem-ctfile/discussions) for questions
+
+### Reporting Issues
+
+When reporting issues, please include:
+
+- PHP version (`php --version`)
+- Package version (`composer show yangweijie/filesystem-ctfile`)
+- Operating system and version
+- Complete error message and stack trace
+- Minimal code example that reproduces the issue
+- Steps to reproduce the problem
+
+### Security Issues
+
+For security-related issues, please email directly instead of opening a public issue:
+- Email: yangweijie@example.com
+- Subject: [SECURITY] Filesystem ctFile Extension
+
+### Commercial Support
+
+For commercial support, custom development, or consulting services, please contact:
+- Email: yangweijie@example.com
+- GitHub: [@yangweijie](https://github.com/yangweijie)

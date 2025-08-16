@@ -296,7 +296,9 @@
   - Set up continuous integration with GitHub Actions or similar
   - _Requirements: 10.1, 10.5_
 
-- [-] 10.2 Create package distribution files
+- [x] 10.2 Create package distribution files
+
+
 
 
 
