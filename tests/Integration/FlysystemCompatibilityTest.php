@@ -103,22 +103,38 @@ class FlysystemCompatibilityTest extends TestCase
             ->toThrow(UnableToCheckDirectoryExistence::class);
     }
 
-    public function test_filesystem_write_throws_not_implemented_exception(): void
+    public function test_filesystem_write_delegates_to_adapter(): void
     {
-        expect(fn () => $this->filesystem->write('test.txt', 'content'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('writeFile')
+            ->once()
+            ->with('test.txt', 'content')
+            ->andReturn(true);
+
+        $this->filesystem->write('test.txt', 'content');
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
-    public function test_filesystem_write_stream_throws_not_implemented_exception(): void
+    public function test_filesystem_write_stream_delegates_to_adapter(): void
     {
         $stream = fopen('php://memory', 'r+');
         fwrite($stream, 'content');
         rewind($stream);
 
-        expect(fn () => $this->filesystem->writeStream('test.txt', $stream))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('writeFile')
+            ->once()
+            ->with('test.txt', 'content')
+            ->andReturn(true);
+
+        $this->filesystem->writeStream('test.txt', $stream);
 
         fclose($stream);
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
     public function test_filesystem_read_delegates_to_adapter(): void
@@ -169,22 +185,64 @@ class FlysystemCompatibilityTest extends TestCase
         fclose($result);
     }
 
-    public function test_filesystem_delete_throws_not_implemented_exception(): void
+    public function test_filesystem_delete_delegates_to_adapter(): void
     {
-        expect(fn () => $this->filesystem->delete('test.txt'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('deleteFile')
+            ->once()
+            ->with('test.txt')
+            ->andReturn(true);
+
+        $this->filesystem->delete('test.txt');
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
-    public function test_filesystem_delete_directory_throws_not_implemented_exception(): void
+    public function test_filesystem_delete_directory_delegates_to_adapter(): void
     {
-        expect(fn () => $this->filesystem->deleteDirectory('uploads'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with('uploads')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('removeDirectory')
+            ->once()
+            ->with('uploads', true)
+            ->andReturn(true);
+
+        $this->filesystem->deleteDirectory('uploads');
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
-    public function test_filesystem_create_directory_throws_not_implemented_exception(): void
+    public function test_filesystem_create_directory_delegates_to_adapter(): void
     {
-        expect(fn () => $this->filesystem->createDirectory('uploads'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with('uploads')
+            ->andReturn(false);
+
+        $this->mockClient
+            ->shouldReceive('createDirectory')
+            ->once()
+            ->with('uploads', true)
+            ->andReturn(true);
+
+        $this->filesystem->createDirectory('uploads');
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
     public function test_filesystem_set_visibility_delegates_to_adapter(): void
@@ -243,22 +301,71 @@ class FlysystemCompatibilityTest extends TestCase
         expect($fileSize)->toBeInt();
     }
 
-    public function test_filesystem_list_contents_throws_not_implemented_exception(): void
+    public function test_filesystem_list_contents_works_with_adapter(): void
     {
-        expect(fn () => $this->filesystem->listContents('/'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $mockListing = [
+            [
+                'path' => 'file1.txt',
+                'name' => 'file1.txt',
+                'type' => 'file',
+                'size' => 1024,
+                'timestamp' => 1640995200,
+                'visibility' => 'public'
+            ]
+        ];
+
+        $this->mockClient
+            ->shouldReceive('listFiles')
+            ->once()
+            ->with('', false)
+            ->andReturn($mockListing);
+
+        $contents = $this->filesystem->listContents('/');
+        $items = iterator_to_array($contents);
+        
+        expect($items)->toHaveCount(1);
+        expect($items[0])->toBeInstanceOf(\League\Flysystem\FileAttributes::class);
+        expect($items[0]->path())->toBe('file1.txt');
     }
 
-    public function test_filesystem_move_throws_not_implemented_exception(): void
+    public function test_filesystem_move_delegates_to_adapter(): void
     {
-        expect(fn () => $this->filesystem->move('old.txt', 'new.txt'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('old.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('moveFile')
+            ->once()
+            ->with('old.txt', 'new.txt')
+            ->andReturn(true);
+
+        $this->filesystem->move('old.txt', 'new.txt');
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
-    public function test_filesystem_copy_throws_not_implemented_exception(): void
+    public function test_filesystem_copy_delegates_to_adapter(): void
     {
-        expect(fn () => $this->filesystem->copy('source.txt', 'destination.txt'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with('source.txt')
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('copyFile')
+            ->once()
+            ->with('source.txt', 'destination.txt')
+            ->andReturn(true);
+
+        $this->filesystem->copy('source.txt', 'destination.txt');
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
     public function test_filesystem_has_method_delegates_to_file_exists(): void

@@ -252,18 +252,25 @@ class CtFileIntegrationTest extends TestCase
         // Setup mock server
         $this->mockServer->connect('localhost', 21, 'test', 'password');
 
-        // Test that unimplemented operations still throw exceptions
-        // even with a working mock server
-        expect(fn () => $this->filesystem->write('test.txt', 'content'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
-
         // Test that implemented operations work with mock server
         $this->mockServer->addFile('test.txt', 'test content');
         $content = $this->filesystem->read('test.txt');
         expect($content)->toBe('test content');
 
-        expect(fn () => $this->filesystem->delete('test.txt'))
-            ->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
+        // Test write operation
+        $this->filesystem->write('new-file.txt', 'new content');
+        expect($this->mockServer->fileExists('new-file.txt'))->toBeTrue();
+
+        // Test delete operation
+        $this->filesystem->delete('test.txt');
+        expect($this->mockServer->fileExists('test.txt'))->toBeFalse();
+
+        // Test directory operations
+        $this->filesystem->createDirectory('test-dir');
+        expect($this->mockServer->directoryExists('test-dir'))->toBeTrue();
+
+        $this->filesystem->deleteDirectory('test-dir');
+        expect($this->mockServer->directoryExists('test-dir'))->toBeFalse();
     }
 
     /**

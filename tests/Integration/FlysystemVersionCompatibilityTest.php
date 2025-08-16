@@ -109,11 +109,12 @@ class FlysystemVersionCompatibilityTest extends TestCase
         ]);
 
         // These methods should accept Config objects without errors
-        expect(fn () => $this->adapter->write('test.txt', 'content', $config))
-            ->toThrow(\BadMethodCallException::class); // Expected since not implemented yet
+        $this->mockClient->shouldReceive('writeFile')->andReturn(true);
+        $this->adapter->write('test.txt', 'content', $config);
 
-        expect(fn () => $this->adapter->createDirectory('test', $config))
-            ->toThrow(\BadMethodCallException::class); // Expected since not implemented yet
+        $this->mockClient->shouldReceive('directoryExists')->andReturn(false);
+        $this->mockClient->shouldReceive('createDirectory')->andReturn(true);
+        $this->adapter->createDirectory('test', $config);
     }
 
     public function test_adapter_integrates_with_path_prefixer(): void
@@ -208,26 +209,30 @@ class FlysystemVersionCompatibilityTest extends TestCase
 
     public function test_adapter_void_return_types(): void
     {
-        // Test methods that should return void (when implemented)
-        // For now, they throw BadMethodCallException
-
+        // Test methods that should return void (now implemented)
         $config = new Config();
 
-        expect(fn () => $this->adapter->write('test.txt', 'content', $config))
-            ->toThrow(\BadMethodCallException::class);
+        $this->mockClient->shouldReceive('writeFile')->andReturn(true);
+        $this->adapter->write('test.txt', 'content', $config);
 
-        expect(fn () => $this->adapter->delete('test.txt'))
-            ->toThrow(\BadMethodCallException::class);
+        $this->mockClient->shouldReceive('fileExists')->andReturn(true);
+        $this->mockClient->shouldReceive('deleteFile')->andReturn(true);
+        $this->adapter->delete('test.txt');
 
-        expect(fn () => $this->adapter->createDirectory('test', $config))
-            ->toThrow(\BadMethodCallException::class);
+        $this->mockClient->shouldReceive('directoryExists')->andReturn(false);
+        $this->mockClient->shouldReceive('createDirectory')->andReturn(true);
+        $this->adapter->createDirectory('test', $config);
+
+        // All should complete without throwing exceptions
+        $this->assertTrue(true);
     }
 
     public function test_adapter_iterable_return_type(): void
     {
-        // Test listContents returns iterable (when implemented)
-        expect(fn () => $this->adapter->listContents('/', false))
-            ->toThrow(\BadMethodCallException::class);
+        // Test listContents returns iterable (now implemented)
+        $this->mockClient->shouldReceive('listFiles')->andReturn([]);
+        $result = $this->adapter->listContents('/', false);
+        expect($result)->toBeIterable();
     }
 
     public function test_adapter_file_attributes_return_type(): void
@@ -262,9 +267,9 @@ class FlysystemVersionCompatibilityTest extends TestCase
 
         $config = new Config();
 
-        // writeStream is not implemented
-        expect(fn () => $this->adapter->writeStream('test.txt', $stream, $config))
-            ->toThrow(\BadMethodCallException::class);
+        // writeStream is now implemented
+        $this->mockClient->shouldReceive('writeFile')->andReturn(true);
+        $this->adapter->writeStream('test.txt', $stream, $config);
 
         // readStream is implemented
         $this->mockClient->shouldReceive('fileExists')->with('test.txt')->andReturn(true);

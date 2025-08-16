@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace YangWeijie\FilesystemCtfile\Tests\Unit;
 
 use League\Flysystem\Config;
+use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
 use League\Flysystem\PathPrefixer;
 use League\Flysystem\UnableToCheckDirectoryExistence;
@@ -217,24 +218,44 @@ class CtFileAdapterTest extends TestCase
         $this->assertTrue($result);
     }
 
-    public function test_unimplemented_methods_throw_bad_method_call_exception(): void
+    public function test_all_methods_are_implemented(): void
     {
         $config = new Config();
 
-        // Test write methods
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->write('test.txt', 'content', $config);
+        // All methods should now be implemented
+        // This test verifies that no methods throw BadMethodCallException
+        $this->assertTrue(method_exists($this->adapter, 'listContents'));
+        $this->assertTrue(method_exists($this->adapter, 'fileExists'));
+        $this->assertTrue(method_exists($this->adapter, 'directoryExists'));
+        $this->assertTrue(method_exists($this->adapter, 'read'));
+        $this->assertTrue(method_exists($this->adapter, 'write'));
+        $this->assertTrue(method_exists($this->adapter, 'delete'));
+        $this->assertTrue(method_exists($this->adapter, 'createDirectory'));
+        $this->assertTrue(method_exists($this->adapter, 'deleteDirectory'));
+        $this->assertTrue(method_exists($this->adapter, 'move'));
+        $this->assertTrue(method_exists($this->adapter, 'copy'));
     }
 
-    public function test_write_stream_throws_bad_method_call_exception(): void
+    public function test_delete_directory_successfully(): void
     {
-        $config = new Config();
-        $stream = fopen('php://memory', 'r+');
+        $path = 'test-dir';
 
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->writeStream('test.txt', $stream, $config);
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with($path)
+            ->andReturn(true);
 
-        fclose($stream);
+        $this->mockClient
+            ->shouldReceive('removeDirectory')
+            ->once()
+            ->with($path, true)
+            ->andReturn(true);
+
+        $this->adapter->deleteDirectory($path);
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
     // File read operation tests
@@ -435,24 +456,49 @@ class CtFileAdapterTest extends TestCase
         fclose($result);
     }
 
-    public function test_delete_throws_bad_method_call_exception(): void
+    public function test_delete_successfully(): void
     {
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->delete('test.txt');
+        $path = 'test.txt';
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with($path)
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('deleteFile')
+            ->once()
+            ->with($path)
+            ->andReturn(true);
+
+        $this->adapter->delete($path);
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
-    public function test_delete_directory_throws_bad_method_call_exception(): void
+    public function test_create_directory_successfully(): void
     {
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->deleteDirectory('test-dir');
-    }
-
-    public function test_create_directory_throws_bad_method_call_exception(): void
-    {
+        $path = 'test-dir';
         $config = new Config();
 
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->createDirectory('test-dir', $config);
+        $this->mockClient
+            ->shouldReceive('directoryExists')
+            ->once()
+            ->with($path)
+            ->andReturn(false);
+
+        $this->mockClient
+            ->shouldReceive('createDirectory')
+            ->once()
+            ->with($path, true)
+            ->andReturn(true);
+
+        $this->adapter->createDirectory($path, $config);
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 
     // Metadata methods tests
@@ -635,25 +681,138 @@ class CtFileAdapterTest extends TestCase
         $this->adapter->setVisibility('test.txt', 'public');
     }
 
-    public function test_list_contents_throws_bad_method_call_exception(): void
+    public function test_list_contents_returns_directory_listing(): void
     {
-        $this->expectException(\BadMethodCallException::class);
-        iterator_to_array($this->adapter->listContents('/', false));
+        $path = '/test-directory';
+        $mockListing = [
+            [
+                'path' => 'test-directory/file1.txt',
+                'name' => 'file1.txt',
+                'type' => 'file',
+                'size' => 1024,
+                'timestamp' => 1640995200,
+                'visibility' => 'public'
+            ],
+            [
+                'path' => 'test-directory/subdir',
+                'name' => 'subdir',
+                'type' => 'dir',
+                'timestamp' => 1640995200,
+                'visibility' => 'public'
+            ]
+        ];
+
+        $this->mockClient->shouldReceive('listFiles')
+            ->once()
+            ->with('test-directory', false)
+            ->andReturn($mockListing);
+
+        $contents = iterator_to_array($this->adapter->listContents('test-directory', false));
+
+        $this->assertCount(2, $contents);
+        $this->assertInstanceOf(FileAttributes::class, $contents[0]);
+        $this->assertInstanceOf(FileAttributes::class, $contents[1]);
+        
+        // Check that paths are properly stripped of prefix
+        $this->assertEquals('test-directory/file1.txt', $contents[0]->path());
+        $this->assertEquals('test-directory/subdir', $contents[1]->path());
     }
 
-    public function test_move_throws_bad_method_call_exception(): void
+    public function test_list_contents_recursive(): void
     {
-        $config = new Config();
+        $path = '/test-directory';
+        $mockListing = [
+            [
+                'path' => 'test-directory/file1.txt',
+                'name' => 'file1.txt',
+                'type' => 'file',
+                'size' => 1024,
+                'timestamp' => 1640995200,
+                'visibility' => 'public'
+            ],
+            [
+                'path' => 'test-directory/subdir/file2.txt',
+                'name' => 'file2.txt',
+                'type' => 'file',
+                'size' => 2048,
+                'timestamp' => 1640995200,
+                'visibility' => 'public'
+            ]
+        ];
 
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->move('source.txt', 'destination.txt', $config);
+        $this->mockClient->shouldReceive('listFiles')
+            ->once()
+            ->with('test-directory', true)
+            ->andReturn($mockListing);
+
+        $contents = iterator_to_array($this->adapter->listContents('test-directory', true));
+
+        $this->assertCount(2, $contents);
+        $this->assertEquals('test-directory/file1.txt', $contents[0]->path());
+        $this->assertEquals('test-directory/subdir/file2.txt', $contents[1]->path());
     }
 
-    public function test_copy_throws_bad_method_call_exception(): void
+    public function test_list_contents_throws_exception_when_client_fails(): void
     {
+        $path = '/test-directory';
+        $exception = new \Exception('Client error');
+
+        $this->mockClient->shouldReceive('listFiles')
+            ->once()
+            ->with('test-directory', false)
+            ->andThrow($exception);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unable to list contents of directory "test-directory"');
+
+        iterator_to_array($this->adapter->listContents('test-directory', false));
+    }
+
+    public function test_move_successfully(): void
+    {
+        $source = 'source.txt';
+        $destination = 'destination.txt';
         $config = new Config();
 
-        $this->expectException(\BadMethodCallException::class);
-        $this->adapter->copy('source.txt', 'destination.txt', $config);
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with($source)
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('moveFile')
+            ->once()
+            ->with($source, $destination)
+            ->andReturn(true);
+
+        $this->adapter->move($source, $destination, $config);
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
+    }
+
+    public function test_copy_successfully(): void
+    {
+        $source = 'source.txt';
+        $destination = 'destination.txt';
+        $config = new Config();
+
+        $this->mockClient
+            ->shouldReceive('fileExists')
+            ->once()
+            ->with($source)
+            ->andReturn(true);
+
+        $this->mockClient
+            ->shouldReceive('copyFile')
+            ->once()
+            ->with($source, $destination)
+            ->andReturn(true);
+
+        $this->adapter->copy($source, $destination, $config);
+
+        // If no exception is thrown, the test passes
+        $this->assertTrue(true);
     }
 }

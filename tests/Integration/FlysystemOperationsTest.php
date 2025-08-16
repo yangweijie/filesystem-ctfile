@@ -324,20 +324,30 @@ class FlysystemOperationsTest extends TestCase
     {
         $config = new Config();
 
-        // Test all unimplemented operations throw BadMethodCallException
-        $unimplementedOperations = [
-            fn () => $this->filesystem->write('test.txt', 'content'),
-            fn () => $this->filesystem->writeStream('test.txt', fopen('php://memory', 'r+')),
-            fn () => $this->filesystem->delete('test.txt'),
-            fn () => $this->filesystem->deleteDirectory('test'),
-            fn () => $this->filesystem->createDirectory('test'),
-            fn () => $this->filesystem->listContents('/'),
-            fn () => $this->filesystem->move('old.txt', 'new.txt'),
-            fn () => $this->filesystem->copy('source.txt', 'dest.txt'),
-        ];
+        // Test that all operations are now implemented
+        // listContents should work with proper mocking
+        $this->mockClient->shouldReceive('listFiles')->andReturn([]);
+        $contents = iterator_to_array($this->filesystem->listContents('/'));
+        expect($contents)->toBeArray();
 
-        foreach ($unimplementedOperations as $operation) {
-            expect($operation)->toThrow(\BadMethodCallException::class, 'Method not yet implemented');
-        }
+        // Test that implemented operations work (with proper mocking)
+        $this->mockClient->shouldReceive('writeFile')->andReturn(true);
+        $this->filesystem->write('test.txt', 'content');
+
+        $this->mockClient->shouldReceive('fileExists')->andReturn(true);
+        $this->mockClient->shouldReceive('deleteFile')->andReturn(true);
+        $this->filesystem->delete('test.txt');
+
+        $this->mockClient->shouldReceive('directoryExists')->andReturn(false);
+        $this->mockClient->shouldReceive('createDirectory')->andReturn(true);
+        $this->filesystem->createDirectory('test');
+
+        $this->mockClient->shouldReceive('fileExists')->andReturn(true);
+        $this->mockClient->shouldReceive('moveFile')->andReturn(true);
+        $this->filesystem->move('old.txt', 'new.txt');
+
+        $this->mockClient->shouldReceive('fileExists')->andReturn(true);
+        $this->mockClient->shouldReceive('copyFile')->andReturn(true);
+        $this->filesystem->copy('source.txt', 'dest.txt');
     }
 }

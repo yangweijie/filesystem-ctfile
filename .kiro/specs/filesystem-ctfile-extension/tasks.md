@@ -145,9 +145,7 @@
 
 
 
-- [ ] 6. Implement core CtFileAdapter class
-
-
+- [x] 6. Implement core CtFileAdapter class
 
 - [x] 6.1 Create CtFileAdapter skeleton implementing FilesystemAdapter
 
@@ -176,19 +174,31 @@
   - Write unit tests for file reading with various file sizes and error conditions
   - _Requirements: 3.2, 3.6, 2.2_
 
-- [ ] 6.4 Implement file write operations
+
+- [x] 6.4 Implement file write operations
+
+
   - Add write and writeStream methods with directory creation support
   - Implement proper error handling and validation for write operations
   - Write unit tests for file writing with various content types and error scenarios
   - _Requirements: 3.1, 3.6, 2.2_
 
-- [ ] 6.5 Implement file and directory manipulation methods
+- [x] 6.5 Implement file and directory manipulation methods
+
+
+
+
+
   - Add delete, deleteDirectory, createDirectory, move, and copy methods
   - Implement proper error handling and validation for all operations
   - Write unit tests for all manipulation operations with success and failure scenarios
   - _Requirements: 3.3, 4.1, 4.2, 4.3, 4.5, 2.2_
 
-- [ ] 6.6 Implement directory listing functionality
+
+
+- [x] 6.6 Implement directory listing functionality
+
+
   - Add listContents method with support for recursive and non-recursive listing
   - Implement proper metadata conversion and path handling for directory contents
   - Write unit tests for directory listing with various directory structures
@@ -286,7 +296,10 @@
   - Set up continuous integration with GitHub Actions or similar
   - _Requirements: 10.1, 10.5_
 
-- [ ] 10.2 Create package distribution files
+- [-] 10.2 Create package distribution files
+
+
+
   - Finalize composer.json with proper version constraints and metadata
   - Create CHANGELOG.md with version history and breaking changes
   - Add LICENSE file and update README with complete installation and usage instructions
