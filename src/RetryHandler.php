@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace YangWeiJie\FilesystemCtfile;
+namespace YangWeijie\FilesystemCtfile;
 
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;

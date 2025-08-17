@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace YangWeiJie\FilesystemCtfile;
+namespace YangWeijie\FilesystemCtfile;
 
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;

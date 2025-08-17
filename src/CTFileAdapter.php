@@ -872,74 +872,72 @@ class CtFileAdapter implements FilesystemAdapter
     }
 
     /**
-     * Get cached directory listing for a path.
+     * Get cached directory listing.
      *
      * @param string $path The directory path
-     * @param bool $recursive Whether the listing is recursive
+     * @param bool $deep Whether the listing is recursive
      * @return array|null Cached listing or null if not cached
      */
-    private function getCachedListing(string $path, bool $recursive = false): ?array
+    private function getCachedListing(string $path, bool $deep): ?array
     {
         if (!$this->cacheManager || !$this->cacheManager->isEnabled()) {
             return null;
         }
 
-        $cacheKey = $this->cacheManager->getListingKey($path, $recursive);
+        $cacheKey = $this->cacheManager->getListingKey($path, $deep);
 
         return $this->cacheManager->get($cacheKey);
     }
 
     /**
-     * Cache directory listing for a path.
+     * Cache directory listing.
      *
      * @param string $path The directory path
      * @param array $listing The listing to cache
-     * @param bool $recursive Whether the listing is recursive
+     * @param bool $deep Whether the listing is recursive
      * @return void
      */
-    private function cacheListing(string $path, array $listing, bool $recursive = false): void
+    private function cacheListing(string $path, array $listing, bool $deep): void
     {
         if ($this->cacheManager && $this->cacheManager->isEnabled()) {
-            $cacheKey = $this->cacheManager->getListingKey($path, $recursive);
+            $cacheKey = $this->cacheManager->getListingKey($path, $deep);
             $this->cacheManager->set($cacheKey, $listing);
         }
     }
 
     /**
-     * Execute an operation with retry logic if retry handler is available.
+     * Execute an operation with retry logic.
      *
      * @param callable $operation The operation to execute
-     * @param array $context Additional context for logging
+     * @param array $context Context information for logging
      * @return mixed The result of the operation
-     * @throws \Throwable
+     * @throws \Throwable If all retry attempts fail
      */
     private function executeWithRetry(callable $operation, array $context = []): mixed
     {
-        if ($this->retryHandler) {
-            return $this->retryHandler->execute($operation, $context);
+        if (!$this->retryHandler) {
+            return $operation();
         }
 
-        return $operation();
+        return $this->retryHandler->execute($operation, $context);
     }
 
     /**
-     * Simulate setting file visibility.
+     * Simulate setting file visibility (placeholder for actual ctFile implementation).
      *
-     * In a real implementation, this would use actual ctFile visibility/permissions API.
-     *
-     * @param string $path File path
-     * @param string $visibility Visibility setting
+     * @param string $path The file path
+     * @param string $visibility The visibility to set
      * @return bool True if successful
      */
     private function simulateSetVisibility(string $path, string $visibility): bool
     {
-        // In a real implementation, this would:
-        // 1. Convert Flysystem visibility to ctFile permissions
-        // 2. Use ctFile API to set file permissions
-        // 3. Return success/failure status
-
-        // For now, we just simulate success unless path contains 'fail'
-        return !str_contains($path, 'fail-visibility');
+        // This is a placeholder implementation
+        // In a real ctFile integration, this would use the actual ctFile API
+        // to set file permissions or visibility settings
+        
+        // For now, we'll just return true to indicate success
+        // The actual implementation would depend on ctFile's permission system
+        return true;
     }
 
     /**
@@ -950,7 +948,7 @@ class CtFileAdapter implements FilesystemAdapter
     private function getDefaultConfig(): array
     {
         return [
-            'root_path' => '',
+            'root_path' => '/',
             'path_separator' => '/',
             'case_sensitive' => true,
             'create_directories' => true,
