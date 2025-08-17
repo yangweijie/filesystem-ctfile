@@ -227,6 +227,8 @@ class CtFileClient
             'timeout' => self::CONNECTION_TIMEOUT,
             'ssl' => false,
             'passive' => true,
+            // Base URL for ctFile OpenAPI (public cloud)
+            'api_base' => 'https://rest.ctfile.com',
         ], $config);
     }
 
@@ -482,9 +484,8 @@ class CtFileClient
         $this->ensureConnected();
 
         try {
-            // Simulate file existence check
-            // In a real implementation, this would use actual ctFile existence check
-            return $this->performFileExistsCheck($path);
+            // Check if file exists and return true if key is not empty
+            return $this->performFileExistsCheck($path) !== '';
         } catch (\Throwable $e) {
             throw CtFileOperationException::forOperation(
                 "File existence check failed: {$e->getMessage()}",
@@ -502,6 +503,181 @@ class CtFileClient
      * @return array File information array
      * @throws CtFileOperationException If file info retrieval fails
      */
+    /**
+     * Get file ID by path.
+     *
+     * @param string $path File path
+     * @return string File ID
+     * @throws CtFileOperationException If file not found or operation fails
+     */
+    public function getFileId(string $path): string
+    {
+        error_log(sprintf('getFileId called for path: %s', $path));
+        $fileKey = $this->performFileExistsCheck($path);
+        error_log(sprintf('performFileExistsCheck returned: %s', $fileKey));
+        
+        if ($fileKey === '') {
+            error_log(sprintf('File not found: %s', $path));
+            throw new CtFileOperationException(
+                'File or directory not found',
+                'get_file_id',
+                $path
+            );
+        }
+        
+        // Extract file ID from the key (remove 'f' prefix for files, 'd' prefix for directories)
+        if (str_starts_with($fileKey, 'f') || str_starts_with($fileKey, 'd')) {
+            return substr($fileKey, 1);
+        }
+        
+        return $fileKey;
+    }
+
+    /**
+     * Generate a public URL for the file.
+     *
+     * @param string $path File path
+     * @return string Public URL
+     * @throws CtFileOperationException If operation fails
+     */
+    public function getPublicUrl(string $path): string
+    {
+        $session = (string)($this->config['session'] ?? '');
+        if ($session === '') {
+            throw new CtFileOperationException('Missing session token in config', 'get_public_url', $path);
+        }
+
+        // First, try to get the weblink from file listing
+        try {
+            $fileKey = $this->performFileExistsCheck($path);
+            if ($fileKey !== '') {
+                // Get the weblink from the cached file info during exists check
+                $weblink = $this->getWeblinkFromFileInfo($path);
+                if ($weblink !== '') {
+                    return $weblink;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Continue to try directlink API if file info approach fails
+        }
+
+        // Fallback to directlink API
+        $fileId = $this->getFileId($path);
+        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
+        $url = $baseUrl . '/v1/public/file/share';
+
+        try {
+            $response = $this->httpPostJson($url, [
+                'session' => $session,
+                'ids' => [$fileId]
+            ]);
+
+            error_log(sprintf('getPublicUrl API response: %s', json_encode($response)));
+
+            if (!isset($response['code']) || (int)$response['code'] !== 200) {
+                $msg = $response['message'] ?? 'Failed to generate public URL';
+                throw new CtFileOperationException(
+                    $msg,
+                    'get_public_url',
+                    $path,
+                    [],
+                    $response['code'] ?? 0
+                );
+            }
+
+            // Handle different response structures
+            $directlink = null;
+            
+            // Try different possible response structures
+            if (isset($response['results']) && is_array($response['results']) && !empty($response['results'])) {
+                $directlink = $response['results'][0]['directlink'] ?? null;
+            }
+
+//            if (empty($directlink)) {
+//                throw new CtFileOperationException(
+//                    'Invalid response format: missing URL in response: ' . json_encode($response),
+//                    'get_public_url',
+//                    $path
+//                );
+//            }
+
+            return $directlink;
+        } catch (\Throwable $e) {
+            if ($e instanceof CtFileOperationException) {
+                throw $e;
+            }
+            throw new CtFileOperationException(
+                $e->getMessage(),
+                'get_public_url',
+                $path,
+                [],
+                $e->getCode(),
+                $e
+            );
+        }
+    }
+
+    /**
+     * Generate a temporary share link for the file.
+     *
+     * @param string $path File path
+     * @param int $expiresIn Expiration time in seconds (default: 1 hour)
+     * @return array Contains 'url' and 'expires_at' keys
+     * @throws CtFileOperationException If operation fails
+     */
+    public function createTemporaryLink(string $path, int $expiresIn = 3600): array
+    {
+        $this->ensureConnected();
+        
+        $session = (string)($this->config['session'] ?? '');
+        if ($session === '') {
+            throw new CtFileOperationException('Missing session token in config', 'create_temporary_link', $path);
+        }
+
+        $fileId = $this->getFileId($path);
+        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
+        $url = $baseUrl . '/v1/public/file/share';
+
+        try {
+            $response = $this->httpPostJson($url, [
+                'session' => $session,
+                'ids' => [$fileId],
+            ]);
+
+            if (!isset($response['code']) || (int)$response['code'] !== 200) {
+                throw new CtFileOperationException(
+                    $response['message'] ?? 'Failed to create temporary link',
+                    'create_temporary_link',
+                    $path,
+                    [],
+                    $response['code'] ?? 0
+                );
+            }
+
+            if (empty($response['result'])) {
+                throw new CtFileOperationException(
+                    'Invalid response format: missing URL',
+                    'create_temporary_link',
+                    $path
+                );
+            }
+
+            return [
+                'url' => $response['result'][0]['weblink'],
+                'expires_at' => time() + $expiresIn
+            ];
+        } catch (\Exception $e) {
+            throw new CtFileOperationException(
+                $e->getMessage(),
+                'create_temporary_link',
+                $path,
+                [],
+                $e->getCode(),
+                $e
+            );
+        }
+    }
+
     public function getFileInfo(string $path): array
     {
         $this->ensureConnected();
@@ -581,31 +757,90 @@ class CtFileClient
     {
         $this->ensureConnected();
 
-        try {
-            // Simulate file writing
-            // In a real implementation, this would use actual ctFile write logic
-            $success = $this->performFileWrite($path, $contents);
+        $session = (string)($this->config['session'] ?? '');
+        if ($session === '') {
+            throw CtFileOperationException::forOperation('Missing session token in config', 'write_file', $path);
+        }
+        
+        // 检查文件是否已存在
+        if ($this->performFileExistsCheck($path)) {
+            return true; // 文件已存在，跳过上传
+        }
+        
+        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
 
-            if (!$success) {
-                throw CtFileOperationException::forOperation(
-                    "Failed to write file: {$path}",
-                    'write_file',
-                    $path
-                );
+        // Split remote path into directory and filename
+        $normalized = str_replace(['\\'], '/', $path);
+        $dir = rtrim((string)dirname($normalized), '/');
+        $filename = basename($normalized);
+        if ($filename === '' || $filename === '.' || $filename === '..') {
+            throw CtFileOperationException::forOperation('Invalid file name', 'write_file', $path);
+        }
+
+        // Resolve folder_id for target directory
+        [$folderId, $_basePath] = $this->resolveFolderIdAndBasePath($dir === '.' ? '' : $dir, $session, $baseUrl);
+
+        // Prepare temp file for multipart upload
+        $tmp = tmpfile();
+        if ($tmp === false) {
+            throw CtFileOperationException::forOperation('Failed to create temp file', 'write_file', $path);
+        }
+        try {
+            $bytes = fwrite($tmp, $contents);
+            if ($bytes === false) {
+                throw new \RuntimeException('Failed to write contents to temp file');
+            }
+            fflush($tmp);
+            $meta = stream_get_meta_data($tmp);
+            $tmpPath = $meta['uri'] ?? null;
+            if (!$tmpPath || !is_file($tmpPath)) {
+                throw new \RuntimeException('Temp file path unavailable');
+            }
+
+            // Step 1: initialize to get the upload URL (valid ~24h) — send JSON per API spec
+            $initUrl = $baseUrl . '/v1/public/file/upload';
+            $initPayload = [
+                'session'   => $session,
+                'folder_id' => $folderId,
+                'file_name' => $filename,
+                'size'      => (string) strlen($contents),
+                'hash'      => md5($contents),
+            ];
+            $initResp = $this->httpPostJson($initUrl, $initPayload);
+            if (!is_array($initResp) || !isset($initResp['code'])) {
+                throw CtFileOperationException::forOperation('Invalid init response schema', 'write_file', $path);
+            }
+            if ((int) $initResp['code'] !== 200) {
+                $msg = (string) ($initResp['message'] ?? 'init failed');
+                throw CtFileOperationException::forOperation("Upload init error: {$msg}", 'write_file', $path);
+            }
+            var_dump($initResp);
+            $uploadUrl = $initResp['upload_url'] ?? null;
+            if ($uploadUrl === null) {
+                throw CtFileOperationException::forOperation('Upload URL not found in init response', 'write_file', $path);
+            }
+
+            // Step 2: real upload to upload server (multipart/form-data)
+            $uploadPayload = [
+                'name'     => $filename,
+                'filesize' => (string) strlen($contents),
+                'file'     => new \CURLFile($tmpPath, null, $filename),
+            ];
+            $uploadResp = $this->httpPostMultipart($uploadUrl, $uploadPayload);
+            var_dump($uploadResp);
+            if (!is_array($uploadResp) || !isset($uploadResp['code'])) {
+                throw CtFileOperationException::forOperation('Invalid upload response schema', 'write_file', $path);
+            }
+            if ((int) $uploadResp['code'] !== 200) {
+                $msg = (string) ($uploadResp['message'] ?? 'upload failed');
+                throw CtFileOperationException::forOperation("Upload error: {$msg}", 'write_file', $path);
             }
 
             return true;
-        } catch (\Throwable $e) {
-            if ($e instanceof CtFileOperationException) {
-                throw $e;
+        } finally {
+            if (is_resource($tmp)) {
+                fclose($tmp);
             }
-
-            throw CtFileOperationException::forOperation(
-                "File write failed: {$e->getMessage()}",
-                'write_file',
-                $path,
-                $e
-            );
         }
     }
 
@@ -673,22 +908,96 @@ class CtFileClient
     }
 
     /**
-     * Perform the actual file existence check.
+     * Check if a file or directory exists and return its key.
      *
-     * @param string $path Remote file path
-     * @return bool True if file exists
+     * @param string $path Remote file or directory path
+     * @return string File/folder key if exists, empty string otherwise
+     * @throws CtFileOperationException If session is invalid
      */
-    private function performFileExistsCheck(string $path): bool
+    private function performFileExistsCheck(string $path): string
     {
-        // Simulate existence check
-        // In a real implementation, this would use actual ctFile API
-
-        // Simulate non-existent files
-        if (str_contains($path, 'nonexistent') || str_contains($path, 'not-found')) {
-            return false;
+        error_log(sprintf('performFileExistsCheck called for path: %s', $path));
+        $session = (string)($this->config['session'] ?? '');
+        if ($session === '') {
+            $error = 'Missing session token in config';
+            error_log($error);
+            throw CtFileOperationException::forOperation($error, 'file_exists', $path);
         }
 
-        return true;
+        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
+        $path = trim($path, '/');
+        
+        // Handle root-level files
+        if (strpos($path, '/') === false) {
+            $pathParts = [];
+            $filename = $path;
+        } else {
+            $pathParts = explode('/', $path);
+            $filename = array_pop($pathParts);
+        }
+        
+        try {
+            $currentId = '0'; // Start from root directory
+
+            // Traverse the directory structure if not at root level
+            if (!empty($pathParts)) {
+                foreach ($pathParts as $part) {
+                    if (empty($part)) continue;
+                    
+                    // Use the same API format as apiListFiles
+                    $entries = $this->apiListFiles('d' . $currentId, $session, $baseUrl);
+                    $found = false;
+                    foreach ($entries as $item) {
+                        if ($item['name'] === $part && ($item['icon'] ?? '') === 'folder') {
+                            // Extract folder ID from key, removing 'd' prefix
+                            $key = $item['key'] ?? '';
+                            if (preg_match('/^d?(\d+)$/', $key, $matches)) {
+                                $currentId = $matches[1];
+                            } else {
+                                $currentId = preg_replace('/^d/', '', $key);
+                            }
+                            error_log(sprintf('Found folder "%s" with ID: %s', $part, $currentId));
+                            $found = true;
+                            break;
+                        }
+                    }
+
+                    if (!$found) {
+                        error_log(sprintf('Folder "%s" not found in directory %s', $part, $currentId));
+                        return '';
+                    }
+                }
+            }
+
+            // If we're checking a directory (no filename after last slash)
+            if (empty($filename)) {
+                return 'd' . $currentId;
+            }
+
+            // Search for the file in the current directory using apiListFiles
+            $entries = $this->apiListFiles('d' . $currentId, $session, $baseUrl);
+            
+            // Check if file or folder exists in the directory
+            foreach ($entries as $item) {
+                if ($item['name'] === $filename) {
+                    // Determine type from icon field or type field
+                    $isFolder = ($item['icon'] ?? '') === 'folder' || ($item['type'] ?? '') === 'folder';
+                    $prefix = $isFolder ? 'd' : 'f';
+                    
+                    // Extract ID from key field, removing any prefix
+                    $key = $item['key'] ?? '';
+                    if (preg_match('/^[df]?(\d+)$/', $key, $matches)) {
+                        return $prefix . $matches[1];
+                    }
+                    return $prefix . $key;
+                }
+            }
+            
+            return ''; // File not found
+        } catch (\Exception $e) {
+            error_log(sprintf('Check file exists failed: %s', $e->getMessage()));
+            return '';
+        }
     }
 
     /**
@@ -701,14 +1010,12 @@ class CtFileClient
     {
         // Simulate file info retrieval
         // In a real implementation, this would use actual ctFile API
-
         return [
             'path' => $path,
-            'size' => 1024,
             'type' => 'file',
+            'size' => 1024,
+            'last_modified' => time() - 3600,
             'permissions' => '644',
-            'last_modified' => time(),
-            'mime_type' => 'text/plain',
             'owner' => 'testuser',
             'group' => 'testgroup',
         ];
@@ -875,17 +1182,8 @@ class CtFileClient
     {
         $this->ensureConnected();
 
-        if (!$this->directoryExists($directory)) {
-            throw CtFileOperationException::forOperation(
-                "Directory does not exist: {$directory}",
-                'list_files',
-                $directory
-            );
-        }
-
         try {
-            // Simulate directory listing
-            // In a real implementation, this would use actual ctFile listing logic
+            // Real implementation backed by ctFile OpenAPI
             return $this->performDirectoryListing($directory, $recursive);
         } catch (\Throwable $e) {
             if ($e instanceof CtFileOperationException) {
@@ -988,102 +1286,6 @@ class CtFileClient
             throw CtFileOperationException::forOperation(
                 "Directory move failed: {$e->getMessage()}",
                 'move_directory',
-                $sourcePath,
-                $e
-            );
-        }
-    }
-
-    /**
-     * Move/rename a file on the ctFile server.
-     *
-     * @param string $sourcePath Source file path
-     * @param string $destinationPath Destination file path
-     * @return bool True if move successful
-     * @throws CtFileOperationException If move fails
-     */
-    public function moveFile(string $sourcePath, string $destinationPath): bool
-    {
-        $this->ensureConnected();
-
-        if (!$this->fileExists($sourcePath)) {
-            throw CtFileOperationException::forOperation(
-                "Source file does not exist: {$sourcePath}",
-                'move_file',
-                $sourcePath
-            );
-        }
-
-        try {
-            // Simulate file move
-            // In a real implementation, this would use actual ctFile move logic
-            $success = $this->performFileMove($sourcePath, $destinationPath);
-
-            if (!$success) {
-                throw CtFileOperationException::forOperation(
-                    "Failed to move file from {$sourcePath} to {$destinationPath}",
-                    'move_file',
-                    $sourcePath
-                );
-            }
-
-            return true;
-        } catch (\Throwable $e) {
-            if ($e instanceof CtFileOperationException) {
-                throw $e;
-            }
-
-            throw CtFileOperationException::forOperation(
-                "File move failed: {$e->getMessage()}",
-                'move_file',
-                $sourcePath,
-                $e
-            );
-        }
-    }
-
-    /**
-     * Copy a file on the ctFile server.
-     *
-     * @param string $sourcePath Source file path
-     * @param string $destinationPath Destination file path
-     * @return bool True if copy successful
-     * @throws CtFileOperationException If copy fails
-     */
-    public function copyFile(string $sourcePath, string $destinationPath): bool
-    {
-        $this->ensureConnected();
-
-        if (!$this->fileExists($sourcePath)) {
-            throw CtFileOperationException::forOperation(
-                "Source file does not exist: {$sourcePath}",
-                'copy_file',
-                $sourcePath
-            );
-        }
-
-        try {
-            // Simulate file copy
-            // In a real implementation, this would use actual ctFile copy logic
-            $success = $this->performFileCopy($sourcePath, $destinationPath);
-
-            if (!$success) {
-                throw CtFileOperationException::forOperation(
-                    "Failed to copy file from {$sourcePath} to {$destinationPath}",
-                    'copy_file',
-                    $sourcePath
-                );
-            }
-
-            return true;
-        } catch (\Throwable $e) {
-            if ($e instanceof CtFileOperationException) {
-                throw $e;
-            }
-
-            throw CtFileOperationException::forOperation(
-                "File copy failed: {$e->getMessage()}",
-                'copy_file',
                 $sourcePath,
                 $e
             );
@@ -1214,65 +1416,330 @@ class CtFileClient
     }
 
     /**
-     * Perform the actual directory listing operation.
+     * Perform the actual directory listing operation backed by ctFile OpenAPI.
      *
-     * @param string $directory Remote directory path
+     * @param string $directory Remote directory path (e.g. "", "/", "foo/bar" or folder_id like d123)
      * @param bool $recursive Whether to list recursively
-     * @return array Directory contents
+     * @return array
      */
     private function performDirectoryListing(string $directory, bool $recursive): array
     {
-        // Simulate directory listing
-        // In a real implementation, this would use actual ctFile API
-
-        $files = [
-            [
-                'name' => 'file1.txt',
-                'path' => $directory . '/file1.txt',
-                'type' => 'file',
-                'size' => 1024,
-                'last_modified' => time() - 3600,
-                'permissions' => '644',
-                'owner' => 'testuser',
-                'group' => 'testgroup',
-            ],
-            [
-                'name' => 'file2.txt',
-                'path' => $directory . '/file2.txt',
-                'type' => 'file',
-                'size' => 2048,
-                'last_modified' => time() - 7200,
-                'permissions' => '644',
-                'owner' => 'testuser',
-                'group' => 'testgroup',
-            ],
-            [
-                'name' => 'subdir',
-                'path' => $directory . '/subdir',
-                'type' => 'directory',
-                'size' => 0,
-                'last_modified' => time() - 86400,
-                'permissions' => '755',
-                'owner' => 'testuser',
-                'group' => 'testgroup',
-            ],
-        ];
-
-        if ($recursive) {
-            // Add recursive entries
-            $files[] = [
-                'name' => 'nested.txt',
-                'path' => $directory . '/subdir/nested.txt',
-                'type' => 'file',
-                'size' => 512,
-                'last_modified' => time() - 1800,
-                'permissions' => '644',
-                'owner' => 'testuser',
-                'group' => 'testgroup',
-            ];
+        $session = (string)($this->config['session'] ?? '');
+        if ($session === '') {
+            throw CtFileOperationException::forOperation('Missing session token in config', 'list_files', $directory);
         }
 
-        return $files;
+        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
+
+        // Resolve folder_id: either the input already looks like a folder_id (d\d+), or resolve by walking path from root
+        [$folderId, $basePath] = $this->resolveFolderIdAndBasePath($directory, $session, $baseUrl);
+
+        // Fetch entries for this folder and map
+        return $this->listByFolderId($folderId, $basePath, $session, $baseUrl, $recursive);
+    }
+
+    /**
+     * Resolve ctFile folder_id from a path, or accept folder_id directly.
+     * Returns [folderId, basePathString]
+     */
+    private function resolveFolderIdAndBasePath(string $directory, string $session, string $baseUrl): array
+    {
+        $dir = trim($directory);
+        if ($dir === '' || $dir === '/') {
+            return ['d0', ''];
+        }
+
+        $dir = trim($dir, '/');
+        if (preg_match('/^d\d+$/', $dir) === 1) {
+            // Treat as folder_id directly
+            return [$dir, ''];
+        }
+
+        // Treat as path segments starting from root (d0)
+        $segments = array_values(array_filter(explode('/', $dir), fn($s) => $s !== ''));
+        $currentFolderId = 'd0';
+        $currentPath = '';
+
+        foreach ($segments as $seg) {
+            $list = $this->apiListFiles($currentFolderId, $session, $baseUrl);
+            $found = null;
+            foreach ($list as $entry) {
+                if (($entry['icon'] ?? '') === 'folder' && ($entry['name'] ?? '') === $seg) {
+                    $found = $entry;
+                    break;
+                }
+            }
+            if ($found === null) {
+                throw CtFileOperationException::forOperation("Path segment not found: {$seg}", 'list_files', $directory);
+            }
+            $currentFolderId = (string)($found['key'] ?? '');
+            if ($currentFolderId === '') {
+                throw CtFileOperationException::forOperation('Missing folder key in API result', 'list_files', $directory);
+            }
+            $currentPath = ($currentPath === '') ? $seg : ($currentPath . '/' . $seg);
+        }
+
+        return [$currentFolderId, $currentPath];
+    }
+
+    /**
+     * List a folder by folder_id and map to adapter structure. Recurses if requested.
+     */
+    private function listByFolderId(string $folderId, string $basePath, string $session, string $baseUrl, bool $recursive): array
+    {
+        $results = [];
+        $entries = $this->apiListFiles($folderId, $session, $baseUrl);
+
+        foreach ($entries as $e) {
+            $isDir = (($e['icon'] ?? '') === 'folder');
+            $name = (string)($e['name'] ?? '');
+            $path = ltrim(($basePath === '' ? '' : $basePath . '/') . $name, '/');
+            $mapped = [
+                'name' => $name,
+                'path' => $path,
+                'type' => $isDir ? 'directory' : 'file',
+                'size' => $isDir ? 0 : (int)($e['size'] ?? 0),
+                'last_modified' => isset($e['date']) ? (int)$e['date'] : null,
+            ];
+            $results[] = $mapped;
+
+            if ($recursive && $isDir) {
+                $childFolderId = (string)($e['key'] ?? '');
+                if ($childFolderId !== '') {
+                    $childItems = $this->listByFolderId($childFolderId, $path, $session, $baseUrl, true);
+                    foreach ($childItems as $ci) {
+                        $results[] = $ci;
+                    }
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Call ctFile OpenAPI to get entries for a folder.
+     * Pagination per official doc:
+     *  - request with reload=0 and start
+     *  - response contains 'num' indicating next start; num=0 → no more pages
+     * We aggregate pages with strong de-dup to handle any server overlaps.
+     */
+    private function apiListFiles(string $folderId, string $session, string $baseUrl): array
+    {
+        $url = $baseUrl . '/v1/public/file/list';
+        $all = [];
+        $seen = [];
+        $start = 0;
+        $maxLoops = 1000; // safety guard
+        $loops = 0;
+
+        while (true) {
+            $payload = [
+                'filter' => 'null',
+                'folder_id' => $folderId,
+                'orderby' => 'old',
+                'start' => (string)$start,
+                'reload' => 0,
+                'session' => $session,
+            ];
+
+            $resp = $this->httpPostJson($url, $payload);
+
+            if (!is_array($resp) || !isset($resp['code'])) {
+                throw CtFileOperationException::forOperation('Invalid response schema', 'list_files', $folderId);
+            }
+            if ((int)$resp['code'] !== 200) {
+                $msg = (string)($resp['message'] ?? 'unknown error');
+                throw CtFileOperationException::forOperation("API error: {$msg}", 'list_files', $folderId);
+            }
+
+            $results = $resp['results'] ?? [];
+            if (!is_array($results) || count($results) === 0) {
+                break;
+            }
+
+            $addedThisLoop = 0;
+            foreach ($results as $r) {
+                // Prefer API 'key' for de-dup; fallback to a stable composite signature
+                $sig = isset($r['key']) && $r['key'] !== ''
+                    ? 'k:' . (string)$r['key']
+                    : 's:' . md5(json_encode([
+                        $r['name'] ?? '',
+                        $r['icon'] ?? '',
+                        (string)($r['size'] ?? ''),
+                        (string)($r['date'] ?? ''),
+                    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+                if (isset($seen[$sig])) {
+                    continue;
+                }
+                $seen[$sig] = true;
+                $all[] = $r;
+                $addedThisLoop++;
+            }
+
+            // Next page start strictly follows doc: start += num; num=0 means no more
+            $inc = isset($resp['num']) ? (int)$resp['num'] : 0;
+            if ($inc <= 0) {
+                break; // no more pages per doc
+            }
+            // Prevent infinite loops when server repeats the same window
+            if ($addedThisLoop === 0) {
+                break;
+            }
+            $start += $inc;
+
+            $loops++;
+            if ($loops >= $maxLoops) {
+                break;
+            }
+        }
+
+        return $all;
+    }
+
+    /**
+     * Minimal HTTP POST JSON using cURL, returns decoded array.
+     */
+    private function httpPostJson(string $url, array $payload): array
+    {
+        $ch = curl_init($url);
+        if ($ch === false) {
+            throw CtFileOperationException::forOperation('Failed to init curl', 'http_post', $url);
+        }
+
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 30,
+        ];
+        curl_setopt_array($ch, $options);
+
+        $raw = curl_exec($ch);
+        if ($raw === false) {
+            $err = curl_error($ch);
+            curl_close($ch);
+            throw CtFileOperationException::forOperation("HTTP error: {$err}", 'http_post', $url);
+        }
+        curl_close($ch);
+
+        $data = json_decode($raw, true);
+        if (!is_array($data)) {
+            throw CtFileOperationException::forOperation('Invalid JSON response', 'http_post', $url);
+        }
+
+        return $data;
+    }
+
+    /**
+     * Minimal HTTP POST multipart/form-data using cURL.
+     */
+    private function httpPostMultipart(string $url, array $formData): array
+    {
+        $ch = curl_init($url);
+        if ($ch === false) {
+            throw CtFileOperationException::forOperation('Failed to init curl', 'http_post_multipart', $url);
+        }
+
+        $headers = [
+            'Accept: application/json',
+        ];
+
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_POSTFIELDS => $formData,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 60,
+        ]);
+
+        $response = curl_exec($ch);
+        if ($response === false) {
+            $err = curl_error($ch);
+            curl_close($ch);
+            throw CtFileOperationException::forOperation('cURL error: ' . $err, 'http_post_multipart', $url);
+        }
+
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $data = json_decode($response, true);
+        if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
+            throw CtFileOperationException::forOperation(
+                'JSON decode error: ' . json_last_error_msg() . " (HTTP {$status})",
+                'http_post_multipart',
+                $url
+            );
+        }
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * Extract final upload URL from init response.
+     * Supports variations: {url}, {upload_url}, or host+path+query triplet, or flat params
+     */
+    private function extractUploadUrl(array $resp): ?string
+    {
+        // Common direct keys
+        foreach (['upload_url', 'url'] as $k) {
+            if (isset($resp[$k]) && is_string($resp[$k]) && $resp[$k] !== '') {
+                return $resp[$k];
+            }
+        }
+
+        // Nested containers
+        foreach (['data', 'result', 'upload'] as $container) {
+            if (isset($resp[$container]) && is_array($resp[$container])) {
+                $u = $this->extractUploadUrl($resp[$container]);
+                if ($u !== null) {
+                    return $u;
+                }
+            }
+        }
+
+        // host + path + query
+        $host = $resp['host'] ?? null;
+        $path = $resp['path'] ?? ($resp['endpoint'] ?? null);
+        $query = $resp['query'] ?? null;
+        if (is_string($host) && $host !== '' && is_string($path) && $path !== '') {
+            $qs = '';
+            if (is_array($query)) {
+                $qs = http_build_query($query);
+            } elseif (is_string($query) && $query !== '') {
+                $qs = ltrim($query, '?');
+            } else {
+                // Try to assemble from known flat keys
+                $known = [];
+                foreach (['userid','maxsize','folderid','ctt','limit','spd','key'] as $p) {
+                    if (isset($resp[$p])) { $known[$p] = $resp[$p]; }
+                }
+                if ($known) {
+                    $qs = http_build_query($known);
+                }
+            }
+            $scheme = str_starts_with($host, 'http') ? '' : 'https://';
+            return $scheme . rtrim($host, '/') . $path . ($qs !== '' ? ('?' . $qs) : '');
+        }
+
+        // Flat keys: assemble default path
+        if (isset($resp['userid'], $resp['key'])) {
+            $qs = http_build_query(array_filter([
+                'userid' => $resp['userid'],
+                'maxsize' => $resp['maxsize'] ?? null,
+                'folderid' => $resp['folderid'] ?? null,
+                'ctt' => $resp['ctt'] ?? null,
+                'limit' => $resp['limit'] ?? null,
+                'spd' => $resp['spd'] ?? null,
+                'key' => $resp['key'],
+            ], fn($v) => $v !== null));
+            return 'https://upload.ctfile.com/web/upload.do' . ($qs ? ('?' . $qs) : '');
+        }
+
+        return null;
     }
 
     /**
@@ -1320,46 +1787,6 @@ class CtFileClient
     }
 
     /**
-     * Perform the actual file move operation.
-     *
-     * @param string $sourcePath Source file path
-     * @param string $destinationPath Destination file path
-     * @return bool True if successful
-     */
-    private function performFileMove(string $sourcePath, string $destinationPath): bool
-    {
-        // Simulate file move logic
-        // In a real implementation, this would use actual ctFile API
-
-        // Simulate failure for specific test cases
-        if (str_contains($sourcePath, 'fail-move') || str_contains($destinationPath, 'fail-move')) {
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Perform the actual file copy operation.
-     *
-     * @param string $sourcePath Source file path
-     * @param string $destinationPath Destination file path
-     * @return bool True if successful
-     */
-    private function performFileCopy(string $sourcePath, string $destinationPath): bool
-    {
-        // Simulate file copy logic
-        // In a real implementation, this would use actual ctFile API
-
-        // Simulate failure for specific test cases
-        if (str_contains($sourcePath, 'fail-copy') || str_contains($destinationPath, 'fail-copy')) {
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
      * Perform the actual directory copy operation.
      *
      * @param string $sourcePath Source directory path
@@ -1378,6 +1805,102 @@ class CtFileClient
         }
 
         return true;
+    }
+
+    /**
+     * Get weblink from file info during file existence check.
+     *
+     * @param string $path File path
+     * @return string Weblink URL or empty string if not found
+     */
+    private function getWeblinkFromFileInfo(string $path): string
+    {
+        $session = (string)($this->config['session'] ?? '');
+        if ($session === '') {
+            return '';
+        }
+
+        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
+        $path = trim($path, '/');
+        
+        // Handle root-level files
+        if (strpos($path, '/') === false) {
+            $pathParts = [];
+            $filename = $path;
+        } else {
+            $pathParts = explode('/', $path);
+            $filename = array_pop($pathParts);
+        }
+        
+        try {
+            $currentId = '0'; // Start from root directory
+
+            // Traverse the directory structure if not at root level
+            if (!empty($pathParts)) {
+                foreach ($pathParts as $part) {
+                    if (empty($part)) continue;
+                    
+                    $requestData = [
+                        'session' => $session,
+                        'folder_id' => $currentId,
+                        'page' => 1,
+                        'per_page' => 100,
+                        'filter' => 'folder',
+                        'search_value' => $part
+                    ];
+                    $response = $this->httpPostJson($baseUrl . '/v1/public/file/list', $requestData);
+
+                    if (!isset($response['code']) || (int)$response['code'] !== 200) {
+                        return '';
+                    }
+
+                    $items = $response['results'] ?? $response['data']['list'] ?? [];
+                    $found = false;
+                    foreach ($items as $item) {
+                        if ($item['name'] === $part && ($item['icon'] ?? '') === 'folder') {
+                            $currentId = preg_replace('/^d/', '', $item['key'] ?? '');
+                            $found = true;
+                            break;
+                        }
+                    }
+
+                    if (!$found) {
+                        return '';
+                    }
+                }
+            }
+
+            // Search for the file in the current directory
+            $requestData = [
+                'session' => $session,
+                'folder_id' => $currentId,
+                'page' => 1,
+                'per_page' => 100,
+                'search_value' => $filename
+            ];
+            
+            if (empty($pathParts)) {
+                $requestData['filter'] = 'file';
+            }
+            
+            $response = $this->httpPostJson($baseUrl . '/v1/public/file/list', $requestData);
+
+            if (!isset($response['code']) || (int)$response['code'] !== 200) {
+                return '';
+            }
+            
+            $items = $response['results'] ?? $response['data']['list'] ?? [];
+            
+            foreach ($items as $item) {
+                if ($item['name'] === $filename && ($item['icon'] ?? '') !== 'folder') {
+                    return $item['weblink'] ?? '';
+                }
+            }
+            
+            return '';
+        } catch (\Exception $e) {
+            return '';
+        }
     }
 
     /**

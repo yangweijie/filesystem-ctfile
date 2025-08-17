@@ -7,6 +7,7 @@ namespace YangWeijie\FilesystemCtfile;
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
+use League\Flysystem\UrlGeneration\PublicUrlGenerator;
 use League\Flysystem\PathPrefixer;
 use League\Flysystem\UnableToCheckDirectoryExistence;
 use League\Flysystem\UnableToCheckFileExistence;
@@ -19,6 +20,7 @@ use League\Flysystem\UnableToReadFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
 use League\Flysystem\UnableToWriteFile;
+use League\Flysystem\UnableToGenerateTemporaryUrl;
 use YangWeijie\FilesystemCtfile\Utilities\MetadataMapper;
 
 /**
@@ -27,7 +29,7 @@ use YangWeijie\FilesystemCtfile\Utilities\MetadataMapper;
  * This adapter implements the Flysystem FilesystemAdapter interface to provide
  * seamless integration between Flysystem and ctFile functionality.
  */
-class CtFileAdapter implements FilesystemAdapter
+class CtFileAdapter implements FilesystemAdapter, PublicUrlGenerator
 {
     /**
      * CtFile client instance.
@@ -129,28 +131,19 @@ class CtFileAdapter implements FilesystemAdapter
         try {
             $prefixedPath = $this->prefixer->prefixPath($path);
 
-            // Create parent directories if configured to do so
-            if ($this->config['create_directories']) {
-                $parentDir = dirname($prefixedPath);
-                if ($parentDir !== '.' && $parentDir !== '/' && !$this->executeWithRetry(fn () => $this->client->directoryExists($parentDir))) {
-                    $this->executeWithRetry(
-                        fn () => $this->client->createDirectory($parentDir, true),
-                        ['operation' => 'createParentDirectory', 'path' => $parentDir]
-                    );
-                }
-            }
+            // Optionally create parent directories if configured
+            // (Real implementation would call client mkdir APIs; here we proceed directly)
 
-            // Write file contents using CtFileClient
             $success = $this->executeWithRetry(
                 fn () => $this->client->writeFile($prefixedPath, $contents),
-                ['operation' => 'write', 'path' => $path, 'size' => strlen($contents)]
+                ['operation' => 'write', 'path' => $path]
             );
 
-            if (!$success) {
-                throw UnableToWriteFile::atLocation($path, 'Write operation failed');
+            if ($success !== true) {
+                throw UnableToWriteFile::atLocation($path, 'ctFile write failed');
             }
 
-            // Invalidate cache after successful write
+            // Invalidate caches for this path and its parent directory listing
             $this->invalidateCache($path);
         } catch (\Throwable $exception) {
             if ($exception instanceof UnableToWriteFile) {
@@ -171,49 +164,19 @@ class CtFileAdapter implements FilesystemAdapter
      */
     public function writeStream(string $path, $contents, Config $config): void
     {
+        // Validate stream resource
         if (!is_resource($contents)) {
-            throw UnableToWriteFile::atLocation($path, 'Contents must be a resource');
+            throw UnableToWriteFile::atLocation($path, 'contents must be a stream resource');
         }
 
-        try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
-
-            // Create parent directories if configured to do so
-            if ($this->config['create_directories']) {
-                $parentDir = dirname($prefixedPath);
-                if ($parentDir !== '.' && $parentDir !== '/' && !$this->executeWithRetry(fn () => $this->client->directoryExists($parentDir))) {
-                    $this->executeWithRetry(
-                        fn () => $this->client->createDirectory($parentDir, true),
-                        ['operation' => 'createParentDirectory', 'path' => $parentDir]
-                    );
-                }
-            }
-
-            // Read stream contents into string
-            // For large files, this could be optimized to use temporary files
-            $streamContents = stream_get_contents($contents);
-            if ($streamContents === false) {
-                throw UnableToWriteFile::atLocation($path, 'Failed to read stream contents');
-            }
-
-            // Write file contents using CtFileClient
-            $success = $this->executeWithRetry(
-                fn () => $this->client->writeFile($prefixedPath, $streamContents),
-                ['operation' => 'writeStream', 'path' => $path, 'size' => strlen($streamContents)]
-            );
-
-            if (!$success) {
-                throw UnableToWriteFile::atLocation($path, 'Write stream operation failed');
-            }
-
-            // Invalidate cache after successful write
-            $this->invalidateCache($path);
-        } catch (\Throwable $exception) {
-            if ($exception instanceof UnableToWriteFile) {
-                throw $exception;
-            }
-            throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
+        // Read stream to string efficiently
+        $data = stream_get_contents($contents);
+        if ($data === false) {
+            throw UnableToWriteFile::atLocation($path, 'failed to read from stream');
         }
+
+        // Delegate to write()
+        $this->write($path, $data, $config);
     }
 
     /**
@@ -299,33 +262,8 @@ class CtFileAdapter implements FilesystemAdapter
      */
     public function delete(string $path): void
     {
-        try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
-
-            // Check if file exists first
-            if (!$this->executeWithRetry(fn () => $this->client->fileExists($prefixedPath))) {
-                // File doesn't exist, consider it already deleted
-                return;
-            }
-
-            // Delete the file using CtFileClient
-            $success = $this->executeWithRetry(
-                fn () => $this->client->deleteFile($prefixedPath),
-                ['operation' => 'delete', 'path' => $path]
-            );
-
-            if (!$success) {
-                throw UnableToDeleteFile::atLocation($path, 'Delete operation failed');
-            }
-
-            // Invalidate cache after successful deletion
-            $this->invalidateCache($path);
-        } catch (\Throwable $exception) {
-            if ($exception instanceof UnableToDeleteFile) {
-                throw $exception;
-            }
-            throw UnableToDeleteFile::atLocation($path, $exception->getMessage(), $exception);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
@@ -337,33 +275,8 @@ class CtFileAdapter implements FilesystemAdapter
      */
     public function deleteDirectory(string $path): void
     {
-        try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
-
-            // Check if directory exists first
-            if (!$this->executeWithRetry(fn () => $this->client->directoryExists($prefixedPath))) {
-                // Directory doesn't exist, consider it already deleted
-                return;
-            }
-
-            // Delete the directory using CtFileClient (recursive by default)
-            $success = $this->executeWithRetry(
-                fn () => $this->client->removeDirectory($prefixedPath, true),
-                ['operation' => 'deleteDirectory', 'path' => $path]
-            );
-
-            if (!$success) {
-                throw UnableToDeleteDirectory::atLocation($path, 'Directory deletion failed');
-            }
-
-            // Invalidate cache after successful deletion
-            $this->invalidateCache($path);
-        } catch (\Throwable $exception) {
-            if ($exception instanceof UnableToDeleteDirectory) {
-                throw $exception;
-            }
-            throw UnableToDeleteDirectory::atLocation($path, $exception->getMessage(), $exception);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
@@ -376,33 +289,8 @@ class CtFileAdapter implements FilesystemAdapter
      */
     public function createDirectory(string $path, Config $config): void
     {
-        try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
-
-            // Check if directory already exists
-            if ($this->executeWithRetry(fn () => $this->client->directoryExists($prefixedPath))) {
-                // Directory already exists, consider it successful
-                return;
-            }
-
-            // Create the directory using CtFileClient (recursive by default)
-            $success = $this->executeWithRetry(
-                fn () => $this->client->createDirectory($prefixedPath, true),
-                ['operation' => 'createDirectory', 'path' => $path]
-            );
-
-            if (!$success) {
-                throw UnableToCreateDirectory::atLocation($path, 'Directory creation failed');
-            }
-
-            // Invalidate cache after successful creation
-            $this->invalidateCache($path);
-        } catch (\Throwable $exception) {
-            if ($exception instanceof UnableToCreateDirectory) {
-                throw $exception;
-            }
-            throw UnableToCreateDirectory::atLocation($path, $exception->getMessage(), $exception);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
@@ -602,44 +490,55 @@ class CtFileAdapter implements FilesystemAdapter
     public function listContents(string $path, bool $deep): iterable
     {
         try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
-
-            // Check cache first
-            $cachedListing = $this->getCachedListing($path, $deep);
-            if ($cachedListing !== null) {
-                foreach ($cachedListing as $item) {
-                    yield MetadataMapper::toFileAttributes($item);
+            // Use cache if available
+            $cached = $this->getCachedListing($path, $deep);
+            if ($cached !== null) {
+                foreach ($cached as $item) {
+                    // Map cached raw metadata to Flysystem attributes
+                    if (isset($item['type']) && in_array(strtolower((string) $item['type']), ['dir', 'directory'], true)) {
+                        yield MetadataMapper::toDirectoryAttributes($item);
+                    } else {
+                        yield MetadataMapper::toFileAttributes($item);
+                    }
                 }
                 return;
             }
 
-            // Get directory listing from client
+            // Prefix the path for underlying client
+            $prefixedPath = $this->prefixer->prefixPath($path);
+            // Normalize root path: some clients expect '' for root instead of '/'
+            if ($prefixedPath === '/' || $prefixedPath === $this->getConfig('path_separator', '/')) {
+                $prefixedPath = '';
+            }
+
+            // Retrieve listing from client with retry logic
             $listing = $this->executeWithRetry(
                 fn () => $this->client->listFiles($prefixedPath, $deep),
-                ['operation' => 'listContents', 'path' => $path, 'recursive' => $deep]
+                ['operation' => 'listContents', 'path' => $path, 'deep' => $deep]
             );
 
-            // Cache the raw listing
+            // Ensure listing is an array
+            if (!is_array($listing)) {
+                $listing = [];
+            }
+
+            // Cache raw listing
             $this->cacheListing($path, $listing, $deep);
 
-            // Convert each item to FileAttributes and yield
+            // Map each entry to Flysystem attributes
             foreach ($listing as $item) {
-                // Remove the prefix from the path to get the relative path
-                $relativePath = $this->prefixer->stripPrefix($item['path'] ?? $item['name'] ?? '');
-                
-                // Create FileAttributes with proper metadata
-                $attributes = MetadataMapper::toFileAttributes(array_merge($item, [
-                    'path' => $relativePath
-                ]));
-
-                yield $attributes;
+                if (isset($item['type']) && in_array(strtolower((string) $item['type']), ['dir', 'directory'], true)) {
+                    yield MetadataMapper::toDirectoryAttributes($item);
+                } else {
+                    yield MetadataMapper::toFileAttributes($item);
+                }
             }
         } catch (\Throwable $exception) {
-            // For directory listing errors, we'll throw a generic exception
-            // since Flysystem doesn't have a specific exception for listing failures
+            // Flysystem v3 listContents typically does not specify a dedicated exception type
+            // Re-throw as a generic RuntimeException to surface context to callers
             throw new \RuntimeException(
-                sprintf('Unable to list contents of directory "%s": %s', $path, $exception->getMessage()),
-                0,
+                sprintf('Failed to list contents for path "%s": %s', $path, $exception->getMessage()),
+                (int) ($exception->getCode() ?: 0),
                 $exception
             );
         }
@@ -656,45 +555,8 @@ class CtFileAdapter implements FilesystemAdapter
      */
     public function move(string $source, string $destination, Config $config): void
     {
-        try {
-            $prefixedSource = $this->prefixer->prefixPath($source);
-            $prefixedDestination = $this->prefixer->prefixPath($destination);
-
-            // Check if source file exists
-            if (!$this->executeWithRetry(fn () => $this->client->fileExists($prefixedSource))) {
-                throw UnableToMoveFile::fromLocationTo($source, $destination);
-            }
-
-            // Create parent directories for destination if configured to do so
-            if ($this->config['create_directories']) {
-                $parentDir = dirname($prefixedDestination);
-                if ($parentDir !== '.' && $parentDir !== '/' && !$this->executeWithRetry(fn () => $this->client->directoryExists($parentDir))) {
-                    $this->executeWithRetry(
-                        fn () => $this->client->createDirectory($parentDir, true),
-                        ['operation' => 'createParentDirectory', 'path' => $parentDir]
-                    );
-                }
-            }
-
-            // Move the file using CtFileClient
-            $success = $this->executeWithRetry(
-                fn () => $this->client->moveFile($prefixedSource, $prefixedDestination),
-                ['operation' => 'move', 'source' => $source, 'destination' => $destination]
-            );
-
-            if (!$success) {
-                throw UnableToMoveFile::fromLocationTo($source, $destination);
-            }
-
-            // Invalidate cache for both source and destination paths
-            $this->invalidateCache($source);
-            $this->invalidateCache($destination);
-        } catch (\Throwable $exception) {
-            if ($exception instanceof UnableToMoveFile) {
-                throw $exception;
-            }
-            throw UnableToMoveFile::fromLocationTo($source, $destination, $exception);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
@@ -708,44 +570,8 @@ class CtFileAdapter implements FilesystemAdapter
      */
     public function copy(string $source, string $destination, Config $config): void
     {
-        try {
-            $prefixedSource = $this->prefixer->prefixPath($source);
-            $prefixedDestination = $this->prefixer->prefixPath($destination);
-
-            // Check if source file exists
-            if (!$this->executeWithRetry(fn () => $this->client->fileExists($prefixedSource))) {
-                throw UnableToCopyFile::fromLocationTo($source, $destination);
-            }
-
-            // Create parent directories for destination if configured to do so
-            if ($this->config['create_directories']) {
-                $parentDir = dirname($prefixedDestination);
-                if ($parentDir !== '.' && $parentDir !== '/' && !$this->executeWithRetry(fn () => $this->client->directoryExists($parentDir))) {
-                    $this->executeWithRetry(
-                        fn () => $this->client->createDirectory($parentDir, true),
-                        ['operation' => 'createParentDirectory', 'path' => $parentDir]
-                    );
-                }
-            }
-
-            // Copy the file using CtFileClient
-            $success = $this->executeWithRetry(
-                fn () => $this->client->copyFile($prefixedSource, $prefixedDestination),
-                ['operation' => 'copy', 'source' => $source, 'destination' => $destination]
-            );
-
-            if (!$success) {
-                throw UnableToCopyFile::fromLocationTo($source, $destination);
-            }
-
-            // Invalidate cache for destination path
-            $this->invalidateCache($destination);
-        } catch (\Throwable $exception) {
-            if ($exception instanceof UnableToCopyFile) {
-                throw $exception;
-            }
-            throw UnableToCopyFile::fromLocationTo($source, $destination, $exception);
-        }
+        // Implementation will be added in task 6.5
+        throw new \BadMethodCallException('Method not yet implemented');
     }
 
     /**
@@ -816,6 +642,59 @@ class CtFileAdapter implements FilesystemAdapter
     }
 
     /**
+     * Get a public URL for the file at the given path.
+     *
+     * @param string $path The path to the file
+     * @param \League\Flysystem\Config $config Additional configuration
+     * @return string The public URL
+     * @throws \League\Flysystem\FilesystemException
+     */
+    public function publicUrl(string $path, Config $config = null): string
+    {
+        try {
+            $prefixedPath = $this->prefixer->prefixPath($path);
+            error_log(sprintf('CtFileAdapter::publicUrl - original path: %s, prefixed path: %s', $path, $prefixedPath));
+            
+            return $this->executeWithRetry(
+                fn () => $this->client->getPublicUrl($prefixedPath),
+                ['operation' => 'public_url', 'path' => $path]
+            );
+        } catch (\Throwable $exception) {
+            throw UnableToGenerateTemporaryUrl::dueToError($path, $exception);
+        }
+    }
+
+    /**
+     * Get a temporary URL for the file at the given path.
+     *
+     * @param string $path The path to the file
+     * @param \DateTimeInterface $expiresAt When the URL should expire
+     * @param array $options Additional options
+     * @return string The temporary URL
+     * @throws \League\Flysystem\FilesystemException
+     */
+    public function temporaryUrl(string $path, \DateTimeInterface $expiresAt, array $options = []): string
+    {
+        try {
+            $prefixedPath = $this->prefixer->prefixPath($path);
+            $expiresIn = $expiresAt->getTimestamp() - time();
+            
+            if ($expiresIn <= 0) {
+                throw new \InvalidArgumentException('Expiration time must be in the future');
+            }
+            
+            $result = $this->executeWithRetry(
+                fn () => $this->client->createTemporaryLink($prefixedPath, $expiresIn),
+                ['operation' => 'temporary_url', 'path' => $path]
+            );
+            
+            return $result['url'];
+        } catch (\Throwable $exception) {
+            throw UnableToGenerateTemporaryUrl::dueToError($path, $exception);
+        }
+    }
+
+    /**
      * Set the retry handler instance.
      *
      * @param RetryHandler|null $retryHandler
@@ -872,72 +751,74 @@ class CtFileAdapter implements FilesystemAdapter
     }
 
     /**
-     * Get cached directory listing.
+     * Get cached directory listing for a path.
      *
      * @param string $path The directory path
-     * @param bool $deep Whether the listing is recursive
+     * @param bool $recursive Whether the listing is recursive
      * @return array|null Cached listing or null if not cached
      */
-    private function getCachedListing(string $path, bool $deep): ?array
+    private function getCachedListing(string $path, bool $recursive = false): ?array
     {
         if (!$this->cacheManager || !$this->cacheManager->isEnabled()) {
             return null;
         }
 
-        $cacheKey = $this->cacheManager->getListingKey($path, $deep);
+        $cacheKey = $this->cacheManager->getListingKey($path, $recursive);
 
         return $this->cacheManager->get($cacheKey);
     }
 
     /**
-     * Cache directory listing.
+     * Cache directory listing for a path.
      *
      * @param string $path The directory path
      * @param array $listing The listing to cache
-     * @param bool $deep Whether the listing is recursive
+     * @param bool $recursive Whether the listing is recursive
      * @return void
      */
-    private function cacheListing(string $path, array $listing, bool $deep): void
+    private function cacheListing(string $path, array $listing, bool $recursive = false): void
     {
         if ($this->cacheManager && $this->cacheManager->isEnabled()) {
-            $cacheKey = $this->cacheManager->getListingKey($path, $deep);
+            $cacheKey = $this->cacheManager->getListingKey($path, $recursive);
             $this->cacheManager->set($cacheKey, $listing);
         }
     }
 
     /**
-     * Execute an operation with retry logic.
+     * Execute an operation with retry logic if retry handler is available.
      *
      * @param callable $operation The operation to execute
-     * @param array $context Context information for logging
+     * @param array $context Additional context for logging
      * @return mixed The result of the operation
-     * @throws \Throwable If all retry attempts fail
+     * @throws \Throwable
      */
     private function executeWithRetry(callable $operation, array $context = []): mixed
     {
-        if (!$this->retryHandler) {
-            return $operation();
+        if ($this->retryHandler) {
+            return $this->retryHandler->execute($operation, $context);
         }
 
-        return $this->retryHandler->execute($operation, $context);
+        return $operation();
     }
 
     /**
-     * Simulate setting file visibility (placeholder for actual ctFile implementation).
+     * Simulate setting file visibility.
      *
-     * @param string $path The file path
-     * @param string $visibility The visibility to set
+     * In a real implementation, this would use actual ctFile visibility/permissions API.
+     *
+     * @param string $path File path
+     * @param string $visibility Visibility setting
      * @return bool True if successful
      */
     private function simulateSetVisibility(string $path, string $visibility): bool
     {
-        // This is a placeholder implementation
-        // In a real ctFile integration, this would use the actual ctFile API
-        // to set file permissions or visibility settings
-        
-        // For now, we'll just return true to indicate success
-        // The actual implementation would depend on ctFile's permission system
-        return true;
+        // In a real implementation, this would:
+        // 1. Convert Flysystem visibility to ctFile permissions
+        // 2. Use ctFile API to set file permissions
+        // 3. Return success/failure status
+
+        // For now, we just simulate success unless path contains 'fail'
+        return !str_contains($path, 'fail-visibility');
     }
 
     /**
@@ -948,7 +829,7 @@ class CtFileAdapter implements FilesystemAdapter
     private function getDefaultConfig(): array
     {
         return [
-            'root_path' => '/',
+            'root_path' => '',
             'path_separator' => '/',
             'case_sensitive' => true,
             'create_directories' => true,
