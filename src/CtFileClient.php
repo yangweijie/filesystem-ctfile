@@ -549,60 +549,13 @@ class CtFileClient
 
         // First, try to get the weblink from file listing
         try {
-            $fileKey = $this->performFileExistsCheck($path);
-            if ($fileKey !== '') {
-                // Get the weblink from the cached file info during exists check
-                $weblink = $this->getWeblinkFromFileInfo($path);
-                if ($weblink !== '') {
-                    return $weblink;
-                }
+            // Get the weblink from the cached file info during exists check
+            $weblink = $this->getWeblinkFromFileInfo($path);
+            if ($weblink !== '') {
+                return $weblink;
             }
         } catch (\Throwable $e) {
             // Continue to try directlink API if file info approach fails
-        }
-
-        // Fallback to directlink API
-        $fileId = $this->getFileId($path);
-        $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
-        $url = $baseUrl . '/v1/public/file/share';
-
-        try {
-            $response = $this->httpPostJson($url, [
-                'session' => $session,
-                'ids' => [$fileId]
-            ]);
-
-            error_log(sprintf('getPublicUrl API response: %s', json_encode($response)));
-
-            if (!isset($response['code']) || (int)$response['code'] !== 200) {
-                $msg = $response['message'] ?? 'Failed to generate public URL';
-                throw new CtFileOperationException(
-                    $msg,
-                    'get_public_url',
-                    $path,
-                    [],
-                    $response['code'] ?? 0
-                );
-            }
-
-            // Handle different response structures
-            $directlink = null;
-            
-            // Try different possible response structures
-            if (isset($response['results']) && is_array($response['results']) && !empty($response['results'])) {
-                $directlink = $response['results'][0]['directlink'] ?? null;
-            }
-
-//            if (empty($directlink)) {
-//                throw new CtFileOperationException(
-//                    'Invalid response format: missing URL in response: ' . json_encode($response),
-//                    'get_public_url',
-//                    $path
-//                );
-//            }
-
-            return $directlink;
-        } catch (\Throwable $e) {
             if ($e instanceof CtFileOperationException) {
                 throw $e;
             }
@@ -634,14 +587,13 @@ class CtFileClient
             throw new CtFileOperationException('Missing session token in config', 'create_temporary_link', $path);
         }
 
-        $fileId = $this->getFileId($path);
         $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
         $url = $baseUrl . '/v1/public/file/share';
 
         try {
             $response = $this->httpPostJson($url, [
                 'session' => $session,
-                'ids' => [$fileId],
+                'ids' => [$path],
             ]);
 
             if (!isset($response['code']) || (int)$response['code'] !== 200) {
@@ -654,7 +606,7 @@ class CtFileClient
                 );
             }
 
-            if (empty($response['result'])) {
+            if (empty($response['results'])) {
                 throw new CtFileOperationException(
                     'Invalid response format: missing URL',
                     'create_temporary_link',
@@ -663,7 +615,7 @@ class CtFileClient
             }
 
             return [
-                'url' => $response['result'][0]['weblink'],
+                'url' => $response['results'][0]['weblink'],
                 'expires_at' => time() + $expiresIn
             ];
         } catch (\Exception $e) {
@@ -814,7 +766,6 @@ class CtFileClient
                 $msg = (string) ($initResp['message'] ?? 'init failed');
                 throw CtFileOperationException::forOperation("Upload init error: {$msg}", 'write_file', $path);
             }
-            var_dump($initResp);
             $uploadUrl = $initResp['upload_url'] ?? null;
             if ($uploadUrl === null) {
                 throw CtFileOperationException::forOperation('Upload URL not found in init response', 'write_file', $path);
@@ -827,7 +778,6 @@ class CtFileClient
                 'file'     => new \CURLFile($tmpPath, null, $filename),
             ];
             $uploadResp = $this->httpPostMultipart($uploadUrl, $uploadPayload);
-            var_dump($uploadResp);
             if (!is_array($uploadResp) || !isset($uploadResp['code'])) {
                 throw CtFileOperationException::forOperation('Invalid upload response schema', 'write_file', $path);
             }
@@ -1495,6 +1445,7 @@ class CtFileClient
             $name = (string)($e['name'] ?? '');
             $path = ltrim(($basePath === '' ? '' : $basePath . '/') . $name, '/');
             $mapped = [
+                'id'=>$e['key'],
                 'name' => $name,
                 'path' => $path,
                 'type' => $isDir ? 'directory' : 'file',
@@ -1810,10 +1761,10 @@ class CtFileClient
     /**
      * Get weblink from file info during file existence check.
      *
-     * @param string $path File path
+     * @param string $id File path
      * @return string Weblink URL or empty string if not found
      */
-    private function getWeblinkFromFileInfo(string $path): string
+    private function getWeblinkFromFileInfo(string $id): string
     {
         $session = (string)($this->config['session'] ?? '');
         if ($session === '') {
@@ -1821,86 +1772,11 @@ class CtFileClient
         }
 
         $baseUrl = rtrim((string)($this->config['api_base'] ?? 'https://rest.ctfile.com'), '/');
-        $path = trim($path, '/');
-        
-        // Handle root-level files
-        if (strpos($path, '/') === false) {
-            $pathParts = [];
-            $filename = $path;
-        } else {
-            $pathParts = explode('/', $path);
-            $filename = array_pop($pathParts);
+        $shareInfo = $this->httpPostJson($baseUrl.'/v1/public/file/share', ['session' => $session, 'ids' => [$id]]);
+        if (!isset($shareInfo['code']) || (int)$shareInfo['code'] !== 200) {
+           throw new Exception($shareInfo['message'] ?? 'Failed to get file info');
         }
-        
-        try {
-            $currentId = '0'; // Start from root directory
-
-            // Traverse the directory structure if not at root level
-            if (!empty($pathParts)) {
-                foreach ($pathParts as $part) {
-                    if (empty($part)) continue;
-                    
-                    $requestData = [
-                        'session' => $session,
-                        'folder_id' => $currentId,
-                        'page' => 1,
-                        'per_page' => 100,
-                        'filter' => 'folder',
-                        'search_value' => $part
-                    ];
-                    $response = $this->httpPostJson($baseUrl . '/v1/public/file/list', $requestData);
-
-                    if (!isset($response['code']) || (int)$response['code'] !== 200) {
-                        return '';
-                    }
-
-                    $items = $response['results'] ?? $response['data']['list'] ?? [];
-                    $found = false;
-                    foreach ($items as $item) {
-                        if ($item['name'] === $part && ($item['icon'] ?? '') === 'folder') {
-                            $currentId = preg_replace('/^d/', '', $item['key'] ?? '');
-                            $found = true;
-                            break;
-                        }
-                    }
-
-                    if (!$found) {
-                        return '';
-                    }
-                }
-            }
-
-            // Search for the file in the current directory
-            $requestData = [
-                'session' => $session,
-                'folder_id' => $currentId,
-                'page' => 1,
-                'per_page' => 100,
-                'search_value' => $filename
-            ];
-            
-            if (empty($pathParts)) {
-                $requestData['filter'] = 'file';
-            }
-            
-            $response = $this->httpPostJson($baseUrl . '/v1/public/file/list', $requestData);
-
-            if (!isset($response['code']) || (int)$response['code'] !== 200) {
-                return '';
-            }
-            
-            $items = $response['results'] ?? $response['data']['list'] ?? [];
-            
-            foreach ($items as $item) {
-                if ($item['name'] === $filename && ($item['icon'] ?? '') !== 'folder') {
-                    return $item['weblink'] ?? '';
-                }
-            }
-            
-            return '';
-        } catch (\Exception $e) {
-            return '';
-        }
+        return $shareInfo['results'][0]['drlink'] ?? '';
     }
 
     /**

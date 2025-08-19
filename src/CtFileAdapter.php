@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace YangWeijie\FilesystemCtfile;
 
+use DateTimeInterface;
+use InvalidArgumentException;
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
-use League\Flysystem\UrlGeneration\PublicUrlGenerator;
 use League\Flysystem\PathPrefixer;
 use League\Flysystem\UnableToCheckDirectoryExistence;
 use League\Flysystem\UnableToCheckFileExistence;
@@ -21,6 +22,8 @@ use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
 use League\Flysystem\UnableToWriteFile;
 use League\Flysystem\UnableToGenerateTemporaryUrl;
+use League\Flysystem\UrlGeneration\PublicUrlGenerator;
+use League\Flysystem\UrlGeneration\TemporaryUrlGenerator;
 use YangWeijie\FilesystemCtfile\Utilities\MetadataMapper;
 
 /**
@@ -29,7 +32,7 @@ use YangWeijie\FilesystemCtfile\Utilities\MetadataMapper;
  * This adapter implements the Flysystem FilesystemAdapter interface to provide
  * seamless integration between Flysystem and ctFile functionality.
  */
-class CtFileAdapter implements FilesystemAdapter, PublicUrlGenerator
+class CtFileAdapter implements FilesystemAdapter, PublicUrlGenerator, TemporaryUrlGenerator
 {
     /**
      * CtFile client instance.
@@ -652,11 +655,8 @@ class CtFileAdapter implements FilesystemAdapter, PublicUrlGenerator
     public function publicUrl(string $path, Config $config = null): string
     {
         try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
-            error_log(sprintf('CtFileAdapter::publicUrl - original path: %s, prefixed path: %s', $path, $prefixedPath));
-            
             return $this->executeWithRetry(
-                fn () => $this->client->getPublicUrl($prefixedPath),
+                fn () => $this->client->getPublicUrl($path),
                 ['operation' => 'public_url', 'path' => $path]
             );
         } catch (\Throwable $exception) {
@@ -668,23 +668,21 @@ class CtFileAdapter implements FilesystemAdapter, PublicUrlGenerator
      * Get a temporary URL for the file at the given path.
      *
      * @param string $path The path to the file
-     * @param \DateTimeInterface $expiresAt When the URL should expire
-     * @param array $options Additional options
+     * @param DateTimeInterface $expiresAt When the URL should expire
+     * @param Config $options Additional options
      * @return string The temporary URL
-     * @throws \League\Flysystem\FilesystemException
      */
-    public function temporaryUrl(string $path, \DateTimeInterface $expiresAt, array $options = []): string
+    public function temporaryUrl(string $path, DateTimeInterface $expiresAt, Config $options = null): string
     {
         try {
-            $prefixedPath = $this->prefixer->prefixPath($path);
             $expiresIn = $expiresAt->getTimestamp() - time();
             
             if ($expiresIn <= 0) {
-                throw new \InvalidArgumentException('Expiration time must be in the future');
+                throw new InvalidArgumentException('Expiration time must be in the future');
             }
             
             $result = $this->executeWithRetry(
-                fn () => $this->client->createTemporaryLink($prefixedPath, $expiresIn),
+                fn () => $this->client->createTemporaryLink($path, $expiresIn),
                 ['operation' => 'temporary_url', 'path' => $path]
             );
             

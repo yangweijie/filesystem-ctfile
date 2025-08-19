@@ -45,7 +45,8 @@ class MetadataMapper
             $fileSize,
             $visibility,
             $lastModified,
-            $mimeType
+            $mimeType,
+            ['id'=>$ctFileMetadata['id']]
         );
 
         return $attributes;
